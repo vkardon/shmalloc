@@ -9,11 +9,13 @@
 #include <unistd.h>     // For pid_t
 #include <pthread.h>    // For pthread_atfork, pthread_once_t, pthread_once, PTHREAD_ONCE_INIT
 #include <cassert>      // assert()
-#include <cstdio>       // For perror
+#include <cstdio>       // For perror()
 #include <cstdlib>      // For exit, EXIT_FAILURE
 #include <iostream>     // For std::endl
 #include <string>
 #include <memory>
+#include <thread>       // For std::this_thread::yield()
+#include <signal.h>     // For kill()
 #include "alloc.hpp"
 
 namespace mem {
@@ -84,9 +86,13 @@ class ShmAlloc : public Alloc
 
     struct SharedData
     {
+        // We place the lock variables at the top and align them to a
+        // 64-byte boundary (a standard CPU cache line). This prevents
+        // "False Sharing" where the CPU fights itself over nearby data.
+        alignas(64) unsigned char lock{0}; // 0 indicates that the lock is not held by any process
+        pid_t lockPid{0};                  // 0 indicates that the lock is not held by any process
+
         char* top{nullptr};     // Last actually available address process-wide
-        unsigned char lock{0};  // 0 indicates that the lock is not held by any process
-        pid_t lockPid{0};       // 0 indicates that the lock is not held by any process
 
         // victor test - TODO: Temporarily collecting statistics
         struct BlockStats
@@ -237,6 +243,8 @@ private:
     class ShmLocker
     {
     public:
+//#define ORIG
+#ifdef ORIG
         ShmLocker(SharedData* dataIn, int wait, pid_t pidIn)
         {
             // Attempts to acquire a lock. If the lock is held, waits for up to "wait"
@@ -271,17 +279,104 @@ private:
                 usleep(delay);
             }
         }
+#else
+        ShmLocker(SharedData* dataIn, int waitMs, pid_t pidIn)
+        {
+            if(dataIn == nullptr)
+                return;
+
+            struct timespec start;
+            clock_gettime(CLOCK_MONOTONIC, &start);
+
+            int spin_count = 0;
+            unsigned char expected = 0;
+            unsigned char desired = 0xff;
+
+            while(true)
+            {
+                // Atomically atempts to acquire a lock: Try to swap 0 for 0xff
+                // Using __atomic_compare_exchange_n for Acquire/Release semantics
+                expected = 0;
+                if(__atomic_compare_exchange_n(&dataIn->lock, &expected, desired, false, __ATOMIC_ACQUIRE, __ATOMIC_RELAXED))
+                {
+                    // We secured the lock bit. Now set the owner PID.
+                    // Note: Final fence to ensure PID is visible before we return
+                    dataIn->lockPid = pidIn;
+                    __atomic_thread_fence(__ATOMIC_RELEASE);
+
+                    data = dataIn;
+                    pid = pidIn;
+                    break;
+                }
+
+                // Recovery: Check if the lock-holding process has unexpectedly terminated (died)
+                pid_t currentOwner = dataIn->lockPid;
+                if(currentOwner != 0 && currentOwner != pidIn)
+                {
+                    // kill(pid, 0) checks if the process is still alive in the OS table
+                    if(kill(currentOwner, 0) == -1 && errno == ESRCH)
+                    {
+                        // The owner died without releasing. Force-reset the lock.
+                        // This allows the NEXT loop iteration to attempt to grab it.
+                        dataIn->lockPid = 0;
+                        __atomic_store_n(&dataIn->lock, 0, __ATOMIC_RELEASE);
+                        continue;
+                    }
+                }
+
+                // Timeout calculation
+                struct timespec now;
+                clock_gettime(CLOCK_MONOTONIC, &now);
+                long elapsedMs = (now.tv_sec - start.tv_sec) * 1000 + (now.tv_nsec - start.tv_nsec) / 1000000;
+                if(elapsedMs >= waitMs)
+                    break; // Timeout reached
+
+                // Multi-stage backoff
+                if(spin_count < 100)
+                {
+                    // Stage A: "Hot" spin with CPU hint (stays in userspace)
+                    // Portable pause/yield helper:
+                    #if defined(__i386__) || defined(__x86_64__)
+                        __builtin_ia32_pause();
+                    #elif defined(__arm__) || defined(__aarch64__)
+                        asm volatile("yield" ::: "memory");
+                    #else
+                        std::this_thread::yield();
+                    #endif
+
+                    spin_count++;
+                }
+                else if(spin_count < 200)
+                {
+                    // Stage B: Yield to other processes (prevents priority inversion)
+                    //sched_yield();
+                    std::this_thread::yield();
+                    spin_count++;
+                }
+                else
+                {
+                    // Stage C: Physical Sleep (prevents 100% CPU usage on long waits)
+                    useconds_t delay = (useconds_t)((random() % 1000) + 500); // 0.5 - 1.5ms
+                    usleep(delay);
+                    // We don't reset spin_count here to keep us in the "Sleep" stage
+                    // until the lock is acquired or timeout hits.
+                }
+            } // end of while() loop
+        }
+#endif
 
         ~ShmLocker()
         {
-            // The lock must be set and it must be this process's
-            if(!data || data->lockPid != pid)
-                return; // Can't clear the lock that it owned by another process
-            data->lockPid = 0;
-            data->lock = 0;            
+            // Only release if we actually successfully acquired the lock
+            if(data != nullptr && data->lockPid == pid)
+            {
+                // Resetting lockPid first, then releasing the lock bit.
+                data->lockPid = 0;
+                __atomic_store_n(&data->lock, 0, __ATOMIC_RELEASE);
+            }
         }
 
-        operator bool() const { return (data != nullptr); }
+        explicit operator bool() const { return (data != nullptr); }
 
         // Delete the rest of constructors
         ShmLocker(const ShmLocker&) = delete;
