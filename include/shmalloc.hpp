@@ -29,17 +29,17 @@ constexpr const char* __fname__(const char* file, int i)
     return (i == 0) ? (file) : (*(file + i) == '/' ? (file + i + 1) : __fname__(file, i - 1));
 }
 
-#define shmOUT(type, msg) do { \
-    std::cout << "[" << getpid() << "] " << type \
-              << " [" << __fname__(__FILE__, sizeof(__FILE__)-1) << ":" << __LINE__ << "] " \
-              << __func__ << ": " << msg << std::endl; \
+#define shmLOG(stream, type, msg) do { \
+    stream << "[" << getpid() << "] " << type \
+           << " [" << __fname__(__FILE__, sizeof(__FILE__)-1) << ":" << __LINE__ << "] " \
+           << __func__ << ": " << msg << std::endl; \
 } while(0)
 
-#define shmINFO(msg)  if(mEnableInfoLog) shmOUT("INFO", msg)
-#define shmDEBUG(msg) if(mEnableDebugLog) shmOUT("DEBUG", msg)
-#define shmERROR(msg) shmOUT("ERROR", msg)
-
-#define shmVERBOSE(msg) if(verbose) shmOUT("DEBUG", msg)
+#define shmVERBOSE(msg) if(verbose)         shmLOG(std::cout, "DEBUG", msg)
+#define shmDEBUG(msg)   if(mEnableDebugLog) shmLOG(std::cout, "DEBUG", msg)
+#define shmINFO(msg)    if(mEnableInfoLog)  shmLOG(std::cout, "INFO", msg)
+#define shmERROR(msg)                       shmLOG(std::cerr, "ERROR", msg)
+#define shmOUT(msg)                         shmLOG(std::cout, "OUT", msg)
 
 // PID of the current process (could be a parent of a child)
 // NOTE: Must 'inline' to ensure a single definition across all translation units (C++17 and up)
@@ -390,36 +390,30 @@ private:
 #define ALIGN4BYTES         0x00000001          // Use 4-bytes alignment for small slots
 // ... define more flags as needed ...
 
-// Verify that val is MALLOCPAGE-alligned (val is on page boundary)
-// TODO: Convert to inline function
-#ifndef NDEBUG  // Only define the active version if NDEBUG is NOT defined (i.e., Debug build)
-#define VERIFY_MALLOCPAGE_ALLIGNED(val) do{ \
-    if((reinterpret_cast<uint64_t>(val) & MALLOCPAGE_MASK) != 0) \
-    { \
-        std::cerr << "ERROR [" << __FILE__ << ":" << __LINE__ << "] " << __func__ << ": " \
-                  << "val " << reinterpret_cast<void*>(val) << " is NOT MALLOCPAGE-aligned" << std::endl; \
-        /*audit(true);*/ \
-        crashWithCoreDump(0xa10000bad1); \
-    } \
-} while(0)
-#else
-#define VERIFY_MALLOCPAGE_ALLIGNED(ptr) do {} while(0) // No-op in Release
-#endif
+// Helper macros to verify MALLOCPAGE alignment (only for Debug build)
+#ifndef NDEBUG
+    // Verify that val is MALLOCPAGE-aligned (val is on page boundary)
+    #define VERIFY_MALLOCPAGE_ALIGNED(val) do{ \
+        if((reinterpret_cast<uint64_t>(val) & MALLOCPAGE_MASK) != 0) \
+        { \
+            shmERROR("val " << reinterpret_cast<void*>(val) << " is NOT MALLOCPAGE-aligned"); \
+            /*audit(true);*/ \
+            crashWithCoreDump(0xa10000bad1); \
+        } \
+    } while(0)
 
-// Verify that val is NOT MALLOCPAGE-alligned (val is NOT on page boundary)
-// TODO: Convert to inline function
-#ifndef NDEBUG  // Only define the active version if NDEBUG is NOT defined (i.e., Debug build)
-#define VERIFY_NOT_MALLOCPAGE_ALLIGNED(val) do{ \
-    if(val && (reinterpret_cast<uint64_t>(val) & MALLOCPAGE_MASK) == 0) \
-    { \
-        std::cerr << "ERROR [" << __FILE__ << ":" << __LINE__ << "] " << __func__ << ": " \
-                  << "val " << reinterpret_cast<void*>(val) << " is MALLOCPAGE-aligned" << std::endl; \
-        /*audit(true);*/ \
-        crashWithCoreDump(0xa10000bad2); \
-    } \
-} while(0)
+    // Verify that val is NOT MALLOCPAGE-aligned (val is NOT on page boundary)
+    #define VERIFY_NOT_MALLOCPAGE_ALIGNED(val) do{ \
+        if(val && (reinterpret_cast<uint64_t>(val) & MALLOCPAGE_MASK) == 0) \
+        { \
+            shmERROR("val " << reinterpret_cast<void*>(val) << " is MALLOCPAGE-aligned"); \
+            /*audit(true);*/ \
+            crashWithCoreDump(0xa10000bad2); \
+        } \
+    } while(0)
 #else
-#define VERIFY_NOT_MALLOCPAGE_ALLIGNED(ptr) do {} while(0) // No-op in Release
+    #define VERIFY_MALLOCPAGE_ALIGNED(ptr) do {} while(0) // No-op in Release
+    #define VERIFY_NOT_MALLOCPAGE_ALIGNED(ptr) do {} while(0) // No-op in Release
 #endif
 
 // Helper class for printing a memory address in hexadecimal format (by casting to void*).
@@ -631,8 +625,8 @@ inline void* ShmAlloc::alloc(std::size_t size)
         shmDEBUG("Before getMemory(): mBase=" << ADDR(mBase) << ", mTop=" << ADDR(mTop) << ", available size=" << SIZE(mTop - mBase));
 
         ptr = getMemory(space);
-        VERIFY_MALLOCPAGE_ALLIGNED(ptr);                        // Verify MALLOCPAGE-allignment
-        VERIFY_MALLOCPAGE_ALLIGNED((uint64_t)(mBase - ptr));    // (mBase - ptr) should be equal to 'space'
+        VERIFY_MALLOCPAGE_ALIGNED(ptr);                        // Verify MALLOCPAGE-alignment
+        VERIFY_MALLOCPAGE_ALIGNED((uint64_t)(mBase - ptr));    // (mBase - ptr) should be equal to 'space'
 
         shmDEBUG("After getMemory(): mBase=" << ADDR(mBase) << ", mTop=" << ADDR(mTop) << ", available size=" << SIZE(mTop - mBase));
 
@@ -690,11 +684,11 @@ inline void* ShmAlloc::alloc(std::size_t size)
     block->ptr = *(char**)ptr;
     *(char**)ptr = nullptr;  // Protect our chain
 
-    // Verify that block->ptr is NOT MALLOCPAGE-alligned (is NOT on page boundary)
-    VERIFY_NOT_MALLOCPAGE_ALLIGNED(block->ptr);
+    // Verify that block->ptr is NOT MALLOCPAGE-aligned (is NOT on page boundary)
+    VERIFY_NOT_MALLOCPAGE_ALIGNED(block->ptr);
 
-    // Verify that ptr is NOT MALLOCPAGE-alligned (is NOT on page boundary)
-    VERIFY_NOT_MALLOCPAGE_ALLIGNED(ptr);
+    // Verify that ptr is NOT MALLOCPAGE-aligned (is NOT on page boundary)
+    VERIFY_NOT_MALLOCPAGE_ALIGNED(ptr);
 
     shmDEBUG("<--- Leave: size=" << SIZE(size) << ", ptr=" << ADDR(ptr) << ", block->ptr=" << (void*)block->ptr);
 
@@ -837,8 +831,8 @@ inline void ShmAlloc::free(void* ptr)
     if(!ptr)
         return;
 
-    // Verify that ptr is NOT MALLOCPAGE-alligned (is NOT on page boundary)
-    VERIFY_NOT_MALLOCPAGE_ALLIGNED(ptr);
+    // Verify that ptr is NOT MALLOCPAGE-aligned (is NOT on page boundary)
+    VERIFY_NOT_MALLOCPAGE_ALIGNED(ptr);
 
     // Allocated pages are MALLOCPAGE-aligned. To locate the owning block's address,
     // first use MALLOCPAGE_MASK to derive the page's base address. The owning block's
@@ -848,11 +842,11 @@ inline void ShmAlloc::free(void* ptr)
 
     shmDEBUG("ptr=" << ptr << ", blockSize=" << block->blockSize);
 
-    // Verify that page is MALLOCPAGE-alligned
-    VERIFY_MALLOCPAGE_ALLIGNED(page);    
+    // Verify that page is MALLOCPAGE-aligned
+    VERIFY_MALLOCPAGE_ALIGNED(page);    
 
-    // Verify that block->ptr is NOT MALLOCPAGE-alligned (is NOT on page boundary)
-    VERIFY_NOT_MALLOCPAGE_ALLIGNED(block->ptr);
+    // Verify that block->ptr is NOT MALLOCPAGE-aligned (is NOT on page boundary)
+    VERIFY_NOT_MALLOCPAGE_ALIGNED(block->ptr);
 
     // Once memory is re-chained, it becomes the first element in the block's free chain,
     // pointed to by 'block->ptr'. Immediate double-free attempts can be detected by checking
@@ -868,8 +862,8 @@ inline void ShmAlloc::free(void* ptr)
     *(char**)ptr = block->ptr;		
     block->ptr = (char*)ptr;
 
-    // Verify that block->ptr is NOT MALLOCPAGE-alligned (is NOT on page boundary)
-    VERIFY_NOT_MALLOCPAGE_ALLIGNED(block->ptr);
+    // Verify that block->ptr is NOT MALLOCPAGE-aligned (is NOT on page boundary)
+    VERIFY_NOT_MALLOCPAGE_ALIGNED(block->ptr);
 
     // The following block is Expiremental:
     if(mSysPageSize != 0)
@@ -916,7 +910,7 @@ inline void ShmAlloc::free(void* ptr)
 //
 inline char* ShmAlloc::getMemory(std::size_t size)
 {
-    VERIFY_MALLOCPAGE_ALLIGNED(size); // Verify MALLOCPAGE-allignment
+    VERIFY_MALLOCPAGE_ALIGNED(size); // Verify MALLOCPAGE-alignment
 
     char* ptr = nullptr;
 
@@ -929,7 +923,7 @@ inline char* ShmAlloc::getMemory(std::size_t size)
         mBase += size;
         
         shmDEBUG("The current base was extended: ptr=" << ADDR(ptr));
-        VERIFY_MALLOCPAGE_ALLIGNED(ptr); // Verify MALLOCPAGE-allignment
+        VERIFY_MALLOCPAGE_ALIGNED(ptr); // Verify MALLOCPAGE-alignment
         return ptr;
     }
 
@@ -975,7 +969,7 @@ inline char* ShmAlloc::getMemory(std::size_t size)
     if(ptr)
     {
         shmDEBUG("A suitable block was found on the free chain: ptr=" << ADDR(ptr));
-        VERIFY_MALLOCPAGE_ALLIGNED(ptr);    // Verify that ptr is MALLOCPAGE-alligned
+        VERIFY_MALLOCPAGE_ALIGNED(ptr);    // Verify that ptr is MALLOCPAGE-aligned
         return ptr;
     }
 
@@ -1049,7 +1043,7 @@ inline char* ShmAlloc::getMemory(std::size_t size)
     mBase += size;
 
     shmDEBUG("The base was extended into a new memory segment: ptr=" << ADDR(ptr));
-    VERIFY_MALLOCPAGE_ALLIGNED(ptr); // Verify MALLOCPAGE-allignment
+    VERIFY_MALLOCPAGE_ALIGNED(ptr); // Verify MALLOCPAGE-alignment
     return ptr;
 }
 
@@ -1070,10 +1064,10 @@ inline void ShmAlloc::recycleMemory(char* ptr, std::size_t size)
 
     while(size)
     {
-        // Verify that ptr is MALLOCPAGE-alligned (ptr is on page boundary)
+        // Verify that ptr is MALLOCPAGE-aligned (ptr is on page boundary)
         // Verify that size is a multiple of MALLOCPAGE
-        VERIFY_MALLOCPAGE_ALLIGNED(ptr);
-        VERIFY_MALLOCPAGE_ALLIGNED(size);
+        VERIFY_MALLOCPAGE_ALIGNED(ptr);
+        VERIFY_MALLOCPAGE_ALIGNED(size);
 
         shmDEBUG("Recycling " << SIZE(size) << " bytes at " << ADDR(ptr) 
                  << " (" << (size/MALLOCPAGE) << " page(s))");
@@ -1107,8 +1101,8 @@ inline void ShmAlloc::recycleMemory(char* ptr, std::size_t size)
         *base = block->ptr;         // point base free chain to current block free chain
         block->ptr = (char*)base;   // block pointer now points to our memory pages
 
-        // Verify that block->ptr is NOT MALLOCPAGE-alligned (is NOT on page boundary)
-        VERIFY_NOT_MALLOCPAGE_ALLIGNED(block->ptr);
+        // Verify that block->ptr is NOT MALLOCPAGE-aligned (is NOT on page boundary)
+        VERIFY_NOT_MALLOCPAGE_ALIGNED(block->ptr);
 
         std::size_t recycled = block->blockSize + sizeof(BlockHead*);   // total size of recycled memory
         ptr += recycled;
