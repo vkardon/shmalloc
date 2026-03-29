@@ -663,7 +663,7 @@ inline void* ShmAlloc::alloc(std::size_t size)
             if(block->blockSize > size)
                 chainDust += (space - sizeof(BlockHead*)) / block->blockSize * (block->blockSize - size);
 
-            __sync_fetch_and_add(&mSharedData->chainDust, chainDust);
+            __atomic_fetch_add(&mSharedData->chainDust, chainDust, __ATOMIC_RELAXED);
         }
     }
 
@@ -687,8 +687,8 @@ inline void* ShmAlloc::alloc(std::size_t size)
     {
         // Update total row memory requested.
         // Note: The actual allocation will be aligned to the block size.
-        __sync_fetch_and_add(&mSharedData->blockStats[blockIndx].memRequested, size);
-        __sync_fetch_and_add(&mSharedData->blockStats[blockIndx].allocCount, 1);
+        __atomic_fetch_add(&mSharedData->blockStats[blockIndx].memRequested, size, __ATOMIC_RELAXED);
+        __atomic_fetch_add(&mSharedData->blockStats[blockIndx].allocCount, 1, __ATOMIC_RELAXED);
     }
     // victor test end - TODO: Temporarily collecting statistics
 
@@ -1119,9 +1119,9 @@ inline void ShmAlloc::recycleMemory(char* ptr, std::size_t size)
     if(mSharedData->blockStats)
     {
         if(chainDust > 0)
-            __sync_fetch_and_add(&mSharedData->chainDust, chainDust);
+            __atomic_fetch_add(&mSharedData->chainDust, chainDust, __ATOMIC_RELAXED);
         if(dumpedMemory > 0)
-            __sync_fetch_and_add(&mSharedData->chainDust, dumpedMemory);
+            __atomic_fetch_add(&mSharedData->chainDust, dumpedMemory, __ATOMIC_RELAXED);
     }    
 }
 
