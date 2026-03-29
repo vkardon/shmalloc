@@ -422,10 +422,43 @@ private:
 #define VERIFY_NOT_MALLOCPAGE_ALLIGNED(ptr) do {} while(0) // No-op in Release
 #endif
 
-// Helper macros for printing a memory address and size in hexadecimal format (by casting to void*).
-// TODO: Convert to inline function
-#define ADDR(p) static_cast<void*>(p)
-#define SIZE(s) (s) << "(" << reinterpret_cast<void*>(s) << ")"
+// Helper class for printing a memory address in hexadecimal format (by casting to void*).
+template <typename T>
+struct ADDR
+{
+    const T value{};
+    constexpr explicit ADDR(T p) : value(p) {}
+    friend std::ostream& operator<<(std::ostream& os, const ADDR& a)
+    {
+        if constexpr (std::is_pointer_v<T>)
+        {
+            return os << (a.value == nullptr ? "0x0" : static_cast<const void*>(a.value));
+        }
+        else
+        {
+            return os << (a.value == 0 ? "0x0" : reinterpret_cast<const void*>(static_cast<uintptr_t>(a.value)));
+        }
+    }
+};
+
+// Helper class for printing a size in hexadecimal format (by casting to void*).
+template <typename T>
+struct SIZE
+{
+    const T value{};
+    constexpr explicit SIZE(T v) : value(v) {}
+    friend std::ostream& operator<<(std::ostream& os, const SIZE& s)
+    {
+        if constexpr (std::is_pointer_v<T>)
+        {
+            return os << reinterpret_cast<uintptr_t>(s.value) << "(" << reinterpret_cast<void*>(s.value) << ")";
+        }
+        else
+        {
+            return os << s.value << "(" << reinterpret_cast<void*>(s.value) << ")";
+        }
+    }
+};
 
 inline ShmAlloc::ShmAlloc(const std::string& name, int flags, void* start, void* stop)
 {
