@@ -6,31 +6,6 @@
 
 #include <chrono>
 #include <string>
-#include <ostream>
-
-//
-// Helper macros to unify logging of information and error messages
-//
-#define INFO_ENABLED(enabled) inline bool g_InfoEnabled = enabled;
-
-// Strips the '/path/' prefix from the file name
-constexpr const char* __fname__(const char* file, int i)
-{
-    return (i == 0) ? (file) : (*(file + i) == '/' ? (file + i + 1) : __fname__(file, i - 1));
-}
-
-#define __FNAME__  __fname__(__FILE__, sizeof(__FILE__)-1)
-
-#define MSG(type, msg) do { \
-    std::cout << "[" << getpid() << "] " << type \
-              << " [" << __FNAME__ << ":" << __LINE__ << "] " \
-              << __func__ << ": " << msg << std::endl; \
-} while(0)
-
-#define INFO(msg)  if(g_InfoEnabled)MSG("INFO", msg)
-#define ERROR(msg) MSG("ERROR", msg)
-#define OUT(msg) std::cout << msg << std::endl;
-#define FTRACE(msg) std::cout << "### "; MSG("\b", msg)
 
 //
 // Helper class to report elapsed time.

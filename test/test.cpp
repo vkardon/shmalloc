@@ -6,7 +6,9 @@
 #include <list>
 #include <random>
 
-INFO_ENABLED(false);    // Pass 'true' to enable INFO() logging
+static bool g_InfoEnabled = false; // Enable/Disable INFO() logging
+#define INFO(msg)  if(g_InfoEnabled) shmLOG(std::cout, "INFO", msg)
+#define ERROR(msg)                   shmERROR(msg)
 
 class Data
 {
@@ -171,14 +173,14 @@ void TestAllocator(int childrenCount, int allocCount)
     std::size_t totalAllocCount = 0; 
     alloc->getTotals(totalRequested, totalAllocated, totalAllocCount);
 
-    OUT("  Virtual Size (VSZ) : " << BytesToStr(virtualSize)    << " (" << virtualSize  << ")");
-    OUT(" Resident Size (RSS) : " << BytesToStr(residentSize)   << " (" << residentSize << ")");
-    OUT("    Requested Memory : " << BytesToStr(totalRequested) << " (" << totalRequested << ")");
-    OUT("    Allocated Memory : " << BytesToStr(totalAllocated) << " (" << totalAllocated << ")");
-    OUT("         Alloc Count : " << totalAllocCount << " allocations");
+    std::cout << "  Virtual Size (VSZ) : " << BytesToStr(virtualSize)    << " (" << virtualSize  << ")" << std::endl;
+    std::cout << " Resident Size (RSS) : " << BytesToStr(residentSize)   << " (" << residentSize << ")" << std::endl;
+    std::cout << "    Requested Memory : " << BytesToStr(totalRequested) << " (" << totalRequested << ")" << std::endl;
+    std::cout << "    Allocated Memory : " << BytesToStr(totalAllocated) << " (" << totalAllocated << ")" << std::endl;
+    std::cout << "         Alloc Count : " << totalAllocCount << " allocations" << std::endl;
 
-    // OUT("  Used: " << BytesToStr(alloc->getUsed()));
-    // OUT("  Free: " << BytesToStr(alloc->getFree()));
+    // std::cout << "  Used: " << BytesToStr(alloc->getUsed()) << std::endl;
+    // std::cout << "  Free: " << BytesToStr(alloc->getFree()) << std::endl;
 
     // alloc->audit(stdout, std::string("From ") + __func__);
 }

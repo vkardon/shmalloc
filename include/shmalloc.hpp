@@ -31,7 +31,7 @@ constexpr const char* __fname__(const char* file, int i)
 
 #define shmLOG(stream, type, msg) do { \
     stream << "[" << getpid() << "] " << type \
-           << " [" << __fname__(__FILE__, sizeof(__FILE__)-1) << ":" << __LINE__ << "] " \
+           << " [" << mem::__fname__(__FILE__, sizeof(__FILE__)-1) << ":" << __LINE__ << "] " \
            << __func__ << ": " << msg << std::endl; \
 } while(0)
 
