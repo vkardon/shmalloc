@@ -221,23 +221,17 @@ private:
     // static constexpr std::size_t EXTEND_MEM_SIZE = 1024 * 1024 * 16;     // 16 MB
     // static constexpr std::size_t EXTEND_MEM_SIZE = 1024 * 1024 * 32;     // 32 MB
 
-    // // Round-up function to keep in namespace-scoped and type-safe.
-    // template<typename T>
-    // constexpr T ROUND_UP_TO_MALLOCPAGE(T val)
-    // {
-    //     // Use static_assert for a compile-time check.
-    //     static_assert(std::is_integral_v<T>, "ROUND_UP_TO_MALLOCPAGE requires an integral type.");
-    //     return (static_cast<T>(static_cast<uint64_t>(val) + MALLOCPAGE_MASK) & ~MALLOCPAGE_MASK);
-    // }
+    // Round up to the nearest multiple of MALLOCPAGE
+    uint64_t ROUND_UP_TO_MALLOCPAGE(size_t val) const
+    {
+        return (static_cast<uint64_t>(val) + MALLOCPAGE_MASK) & ~MALLOCPAGE_MASK;
+    }
 
-    // // Calculate padding to nearest multiple of MALLOCPAGE
-    // template<typename T>
-    // std::size_t PADDING_TO_MALLOCPAGE(T val)
-    // {
-    //     // Use static_assert for a compile-time check.
-    //     static_assert(std::is_integral_v<T> || std::is_pointer_v<T>, "PADDING_TO_MALLOCPAGE requires an integral or pointer type.");
-    //     return static_cast<std::size_t>((-(reinterpret_cast<uint64_t>(val) & MALLOCPAGE_MASK)) & MALLOCPAGE_MASK);
-    // }
+    // Calculate padding to nearest multiple of MALLOCPAGE
+    uint64_t PADDING_TO_MALLOCPAGE(void* val) const
+    {
+        return (-(reinterpret_cast<uint64_t>(val) & MALLOCPAGE_MASK)) & MALLOCPAGE_MASK;
+    }
 
     // Helper class to synchronize access to the allocator's shared data (locks mSharedData)
     class ShmLocker
@@ -395,14 +389,6 @@ private:
 // Define allocator flags
 #define ALIGN4BYTES         0x00000001          // Use 4-bytes alignment for small slots
 // ... define more flags as needed ...
-
-// Macro to round up to the nearest multiple of MALLOCPAGE
-// TODO: Convert to inline function
-#define ROUND_UP_TO_MALLOCPAGE(val) ( (static_cast<uint64_t>(val) + MALLOCPAGE_MASK) & ~MALLOCPAGE_MASK )
-
-// Macro calculate padding to nearest multiple of MALLOCPAGE
-// TODO: Convert to inline function
-#define PADDING_TO_MALLOCPAGE(val)  ( (-(reinterpret_cast<uint64_t>(val) & MALLOCPAGE_MASK)) & MALLOCPAGE_MASK )
 
 // Verify that val is MALLOCPAGE-alligned (val is on page boundary)
 // TODO: Convert to inline function
