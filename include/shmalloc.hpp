@@ -29,17 +29,17 @@ constexpr const char* __fname__(const char* file, int i)
     return (i == 0) ? (file) : (*(file + i) == '/' ? (file + i + 1) : __fname__(file, i - 1));
 }
 
-#define shmLOG(stream, type, msg) do { \
+#define memLOG(stream, type, msg) do { \
     stream << "[" << getpid() << "] " << type \
            << " [" << mem::__fname__(__FILE__, sizeof(__FILE__)-1) << ":" << __LINE__ << "] " \
            << __func__ << ": " << msg << std::endl; \
 } while(0)
 
-#define shmVERBOSE(msg) if(verbose)         shmLOG(std::cout, "DEBUG", msg)
-#define shmDEBUG(msg)   if(mEnableDebugLog) shmLOG(std::cout, "DEBUG", msg)
-#define shmINFO(msg)    if(mEnableInfoLog)  shmLOG(std::cout, "INFO", msg)
-#define shmERROR(msg)                       shmLOG(std::cerr, "ERROR", msg)
-#define shmOUT(msg)                         shmLOG(std::cout, "OUT", msg)
+#define memVERBOSE(msg) if(verbose)         memLOG(std::cout, "DEBUG", msg)
+#define memDEBUG(msg)   if(mEnableDebugLog) memLOG(std::cout, "DEBUG", msg)
+#define memINFO(msg)    if(mEnableInfoLog)  memLOG(std::cout, "INFO", msg)
+#define memERROR(msg)                       memLOG(std::cerr, "ERROR", msg)
+#define memOUT(msg)                         memLOG(std::cout, "OUT", msg)
 
 // PID of the current process (could be a parent of a child)
 // NOTE: Must 'inline' to ensure a single definition across all translation units (C++17 and up)
@@ -57,7 +57,7 @@ inline void OnChildPostFork()
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
     srandom((unsigned int)(gCurrentPid ^ ts.tv_nsec ^ ts.tv_sec));
-    // shmOUT("DEBUG", "gCurrentPid=" << gCurrentPid);
+    // memOUT("DEBUG", "gCurrentPid=" << gCurrentPid);
 }
 
 // Performs the actual pthread_atfork registration.
@@ -157,7 +157,7 @@ public:
     // Report memory usage and statistics to the specified output
     void audit(FILE* out = stdout, const std::string& msg = "");
 
-    // Diagnostic Methods (Enable/disable shmINFO and shmDEBUG loggers)
+    // Diagnostic Methods (Enable/disable memINFO and memDEBUG loggers)
     void enableInfoLog(bool enable) { mEnableInfoLog = enable; }
     void enableDebugLog(bool enable) { mEnableDebugLog = enable; }
     
@@ -195,7 +195,7 @@ private:
     std::unique_ptr<BlockHead[]> mBlocks;
 
     // Memory usage statistics & diagnostics
-    // Enable/disable shmINFO and shmDEBUG loggers
+    // Enable/disable memINFO and memDEBUG loggers
     bool mEnableInfoLog{false};
     bool mEnableDebugLog{false};
 
@@ -379,7 +379,7 @@ private:
     #define VERIFY_MALLOCPAGE_ALIGNED(val) do{ \
         if((reinterpret_cast<uint64_t>(val) & MALLOCPAGE_MASK) != 0) \
         { \
-            shmERROR("val " << reinterpret_cast<void*>(val) << " is NOT MALLOCPAGE-aligned"); \
+            memERROR("val " << reinterpret_cast<void*>(val) << " is NOT MALLOCPAGE-aligned"); \
             /*audit(true);*/ \
             crashWithCoreDump(0xa10000bad1); \
         } \
@@ -389,7 +389,7 @@ private:
     #define VERIFY_NOT_MALLOCPAGE_ALIGNED(val) do{ \
         if(val && (reinterpret_cast<uint64_t>(val) & MALLOCPAGE_MASK) == 0) \
         { \
-            shmERROR("val " << reinterpret_cast<void*>(val) << " is MALLOCPAGE-aligned"); \
+            memERROR("val " << reinterpret_cast<void*>(val) << " is MALLOCPAGE-aligned"); \
             /*audit(true);*/ \
             crashWithCoreDump(0xa10000bad2); \
         } \
@@ -443,7 +443,7 @@ inline ShmAlloc::ShmAlloc(const std::string& name, int flags, void* start, void*
     if(long sysPageSize = sysconf(_SC_PAGE_SIZE); sysPageSize == -1)
     {
         std::string errmsg = strerror(errno);
-        shmERROR("sysconf(_SC_PAGE_SIZE) failed: " << errmsg << ".");
+        memERROR("sysconf(_SC_PAGE_SIZE) failed: " << errmsg << ".");
     }
     else
     {
@@ -474,7 +474,7 @@ inline ShmAlloc::ShmAlloc(const std::string& name, int flags, void* start, void*
 
 inline ShmAlloc::~ShmAlloc()
 {
-    shmINFO("In destructor of Allocator '" << getName() << "'");
+    memINFO("In destructor of Allocator '" << getName() << "'");
 
     // Cleanup: Unmap memory and mark the memory range as free
     if(mStart == mStop)
@@ -486,13 +486,13 @@ inline ShmAlloc::~ShmAlloc()
 
     std::size_t mapped = mStop - mStart;
 
-    shmINFO("Allocator '" << getName() << "' unmapping "
+    memINFO("Allocator '" << getName() << "' unmapping "
             << SIZE(mapped) << " bytes at " << ADDR(mStart));
 
     if(munmap(mStart, mapped) != 0)
     {
         std::string errmsg = strerror(errno);
-        shmERROR("munmap failed, addr = " << ADDR(mStart)
+        memERROR("munmap failed, addr = " << ADDR(mStart)
                  << ", size = " << SIZE(mapped) << ": " << errmsg << ".");
     }
 }
@@ -517,7 +517,7 @@ inline void ShmAlloc::initSlots()
     mBlocks.reset(new (std::nothrow) BlockHead[mMaxSlots]{});
     if(!mBlocks)
     {
-        shmERROR("Pid " << getpid() << ", allocator '" << mName << "' - "
+        memERROR("Pid " << getpid() << ", allocator '" << mName << "' - "
                  "Out of memory allocating " << (sizeof(BlockHead) * mMaxSlots) << " bytes");
         exit(EXIT_FAILURE); // Critical error if this fails, so exit.
     }
@@ -748,7 +748,7 @@ inline int ShmAlloc::findSlot(std::size_t size) const
 // one-time validation within a heavy test suite.
 inline bool ShmAlloc::testFindSlot()
 {
-    shmOUT("Starting findSlot geometry validation...");
+    memOUT("Starting findSlot geometry validation...");
 
     // Iterate through every possible size up to the maximum managed block
     std::size_t maxSupportedSize = mBlocks[mMaxSlots - 1].blockSize;
@@ -762,7 +762,7 @@ inline bool ShmAlloc::testFindSlot()
         // Validation A: Bounds Check
         if(indx < 0 || indx >= mMaxSlots)
         {
-            shmERROR("Size " << size << " mapped to out-of-bounds slot: " << indx);
+            memERROR("Size " << size << " mapped to out-of-bounds slot: " << indx);
             return false;
         }
 
@@ -771,7 +771,7 @@ inline bool ShmAlloc::testFindSlot()
         // Validation B: Does it actually fit?
         if(selectedBlockSize < size)
         {
-            shmERROR("Size " << size << " mapped to slot " << indx 
+            memERROR("Size " << size << " mapped to slot " << indx 
                      << " which is too small (" << selectedBlockSize << ")");
             return false;
         }
@@ -782,7 +782,7 @@ inline bool ShmAlloc::testFindSlot()
             std::size_t prevBlockSize = mBlocks[indx - 1].blockSize;
             if(prevBlockSize >= size)
             {
-                shmERROR("Size " << size << " mapped to slot " << indx 
+                memERROR("Size " << size << " mapped to slot " << indx 
                          << " (" << selectedBlockSize << "), but could have fit in slot " 
                          << (indx - 1) << " (" << prevBlockSize << ")");
                 return false;
@@ -792,11 +792,11 @@ inline bool ShmAlloc::testFindSlot()
         // Progress logging for large sweeps
         if(size % 1000000 == 0) 
         {
-            shmINFO("Validated up to size: " << size);
+            memINFO("Validated up to size: " << size);
         }
     }
 
-    shmOUT("SUCCESS: All sizes mapped to the optimal bucket index.");
+    memOUT("SUCCESS: All sizes mapped to the optimal bucket index.");
     return true;
 }
 
@@ -821,7 +821,7 @@ inline void* ShmAlloc::alloc(std::size_t size)
     BlockHead* block = &mBlocks[blockIndx];
     char* ptr = block->ptr;
 
-    shmDEBUG("---> Enter: size=" << SIZE(size) << ", block->blockSize=" << SIZE(block->blockSize) << ", block->ptr=" << ADDR(ptr));
+    memDEBUG("---> Enter: size=" << SIZE(size) << ", block->blockSize=" << SIZE(block->blockSize) << ", block->ptr=" << ADDR(ptr));
 
     if(!ptr)
     {
@@ -833,14 +833,14 @@ inline void* ShmAlloc::alloc(std::size_t size)
         // allocation becomes small in constrast to the number of bytes allocated.
         std::size_t space = ROUND_UP_TO_MALLOCPAGE(block->blockSize + sizeof(BlockHead*));
 
-        shmDEBUG("Add memory to the free chain: " << SIZE(space));
-        shmDEBUG("Before getMemory(): mBase=" << ADDR(mBase) << ", mTop=" << ADDR(mTop) << ", available size=" << SIZE(mTop - mBase));
+        memDEBUG("Add memory to the free chain: " << SIZE(space));
+        memDEBUG("Before getMemory(): mBase=" << ADDR(mBase) << ", mTop=" << ADDR(mTop) << ", available size=" << SIZE(mTop - mBase));
 
         ptr = getMemory(space);
         VERIFY_MALLOCPAGE_ALIGNED(ptr);                        // Verify MALLOCPAGE-alignment
         VERIFY_MALLOCPAGE_ALIGNED((uint64_t)(mBase - ptr));    // (mBase - ptr) should be equal to 'space'
 
-        shmDEBUG("After getMemory(): mBase=" << ADDR(mBase) << ", mTop=" << ADDR(mTop) << ", available size=" << SIZE(mTop - mBase));
+        memDEBUG("After getMemory(): mBase=" << ADDR(mBase) << ", mTop=" << ADDR(mTop) << ", available size=" << SIZE(mTop - mBase));
 
         // We need to link the new memory onto this chain.
         // 1. Point the base of the new page(s) to the block header.
@@ -902,7 +902,7 @@ inline void* ShmAlloc::alloc(std::size_t size)
     // Verify that ptr is NOT MALLOCPAGE-aligned (is NOT on page boundary)
     VERIFY_NOT_MALLOCPAGE_ALIGNED(ptr);
 
-    shmDEBUG("<--- Leave: size=" << SIZE(size) << ", ptr=" << ADDR(ptr) << ", block->ptr=" << (void*)block->ptr);
+    memDEBUG("<--- Leave: size=" << SIZE(size) << ", ptr=" << ADDR(ptr) << ", block->ptr=" << (void*)block->ptr);
 
     // victor test - TODO: Temporarily collecting statistics
     // Note: Collect statistics if mSharedData->blockStats is not nullptr.
@@ -951,7 +951,7 @@ inline void ShmAlloc::free(void* ptr)
     void* page = (void*)(((uint64_t)ptr) & ~MALLOCPAGE_MASK);
     BlockHead* block = *(BlockHead**)page;
 
-    shmDEBUG("ptr=" << ptr << ", blockSize=" << block->blockSize);
+    memDEBUG("ptr=" << ptr << ", blockSize=" << block->blockSize);
 
     // Verify that page is MALLOCPAGE-aligned
     VERIFY_MALLOCPAGE_ALIGNED(page);    
@@ -965,7 +965,7 @@ inline void ShmAlloc::free(void* ptr)
     if((char*)ptr == block->ptr)
     {
         // Immediate double delete detected.
-        shmERROR("Double delete of object at " << ptr << ".");
+        memERROR("Double delete of object at " << ptr << ".");
         crashWithCoreDump(0xbadbadbadde1e7e);   // dump core with special signature
     }
 
@@ -1007,7 +1007,7 @@ inline void ShmAlloc::free(void* ptr)
             {
                 // This might not be fatal, but means the optimization won't happen
                 std::string errmsg = strerror(errno);
-                shmERROR("Pid " << getpid() << ", allocator '" << mName << "' - "
+                memERROR("Pid " << getpid() << ", allocator '" << mName << "' - "
                         "madvise(MADV_DONTNEED) failed for addr=" << reinterpret_cast<void*>(startAddr) <<
                         ", size=" << releaseSize << ": " << errmsg);
             }
@@ -1026,14 +1026,14 @@ inline char* ShmAlloc::getMemory(std::size_t size)
     char* ptr = nullptr;
 
     // Do we have sufficient room on the current base?
-    shmDEBUG("mBase=" << (void*)mBase << ", mTop=" << (void*)mTop << ", size=" << SIZE(size));
+    memDEBUG("mBase=" << (void*)mBase << ", mTop=" << (void*)mTop << ", size=" << SIZE(size));
 
     if(mBase + size <= mTop)
     {
         ptr = mBase;
         mBase += size;
         
-        shmDEBUG("The current base was extended: ptr=" << ADDR(ptr));
+        memDEBUG("The current base was extended: ptr=" << ADDR(ptr));
         VERIFY_MALLOCPAGE_ALIGNED(ptr); // Verify MALLOCPAGE-alignment
         return ptr;
     }
@@ -1060,7 +1060,7 @@ inline char* ShmAlloc::getMemory(std::size_t size)
             break;   // The actual block memory is insufficient
 
         // We found a block with a memory chunk large enough to satisfy our request
-        shmDEBUG("Found a large block: block->ptr=" << ADDR(block->ptr) << ", blockSize=" << SIZE(block->blockSize) 
+        memDEBUG("Found a large block: block->ptr=" << ADDR(block->ptr) << ", blockSize=" << SIZE(block->blockSize) 
                     << ", blockMemory=" << SIZE(blockMemory) << ", size=" << SIZE(size));
 
         ptr = block->ptr;
@@ -1071,7 +1071,7 @@ inline char* ShmAlloc::getMemory(std::size_t size)
         // If block's memory chunk larger then we need, then recycle the rest
         if(blockMemory > size)
         {
-            shmDEBUG("Recycle remaining " << SIZE(blockMemory - size) << " bytes at " << ADDR(ptr + size));
+            memDEBUG("Recycle remaining " << SIZE(blockMemory - size) << " bytes at " << ADDR(ptr + size));
             recycleMemory(ptr + size, blockMemory - size);
         }
         break;
@@ -1079,14 +1079,14 @@ inline char* ShmAlloc::getMemory(std::size_t size)
 
     if(ptr)
     {
-        shmDEBUG("A suitable block was found on the free chain: ptr=" << ADDR(ptr));
+        memDEBUG("A suitable block was found on the free chain: ptr=" << ADDR(ptr));
         VERIFY_MALLOCPAGE_ALIGNED(ptr);    // Verify that ptr is MALLOCPAGE-aligned
         return ptr;
     }
 
     // No suitable large block is available on our free chain.
     // Advance the memory base if needed to accommodate the request.
-    shmDEBUG("Before advancing the base: mBase=" << ADDR(mBase) << ", mTop=" << ADDR(mTop) << ", size=" << SIZE(size));
+    memDEBUG("Before advancing the base: mBase=" << ADDR(mBase) << ", mTop=" << ADDR(mTop) << ", size=" << SIZE(size));
 
     std::size_t delta = 0;
 
@@ -1095,18 +1095,18 @@ inline char* ShmAlloc::getMemory(std::size_t size)
         ShmLock lock(&mSharedData->lock, 180000, gCurrentPid);
         if(!lock)
         {
-            shmERROR("Pid " << getpid() << ", allocator '" << mName << "' - failed to get lock");
+            memERROR("Pid " << getpid() << ", allocator '" << mName << "' - failed to get lock");
             audit(stdout, __func__);
             exit(EXIT_FAILURE);  // TODO: call crashWithCoreDump() instead?
         }
 
-        shmDEBUG("mSharedData->top=" << SIZE(mSharedData->top));
+        memDEBUG("mSharedData->top=" << SIZE(mSharedData->top));
 
         std::size_t remaining = mStop - mSharedData->top;
         if(remaining < size)
         {
             // Not enough memory left
-            shmERROR("Pid " << getpid() << ", allocator '" << mName << "' - out of memory allocating " << size << " bytes");
+            memERROR("Pid " << getpid() << ", allocator '" << mName << "' - out of memory allocating " << size << " bytes");
             audit(stdout, __func__);
             exit(EXIT_FAILURE);  // TODO: call crashWithCoreDump() instead?
         }
@@ -1126,7 +1126,7 @@ inline char* ShmAlloc::getMemory(std::size_t size)
             // New memory is not contiguous. Recycle what we can between mBase and mTop
             if(mBase < mTop)
             {
-                shmDEBUG("New memory is not contiguous. Calling recycleMemory.");
+                memDEBUG("New memory is not contiguous. Calling recycleMemory.");
                 recycleMemory(mBase, mTop - mBase);   
             }
 
@@ -1139,21 +1139,21 @@ inline char* ShmAlloc::getMemory(std::size_t size)
         mTop = mSharedData->top;
     }
 
-    shmDEBUG("After advancing the base: mBase=" << ADDR(mBase) << ", mTop=" << ADDR(mTop) << ", size=" << SIZE(size));
+    memDEBUG("After advancing the base: mBase=" << ADDR(mBase) << ", mTop=" << ADDR(mTop) << ", size=" << SIZE(size));
 
     // Advise the kernel TO dump the actually used portions.
     if(::madvise(mBase, delta, MADV_DODUMP) == -1)
     {
         // This might not be fatal, but means the optimization won't happen
         std::string errmsg = strerror(errno);
-        shmERROR("Pid " << getpid() << ", allocator '" << mName << "' - "
+        memERROR("Pid " << getpid() << ", allocator '" << mName << "' - "
                  "madvise(MADV_DODUMP) failed for addr=" << mBase << ", size=" << delta << ": " << errmsg);
     }
 
     ptr = mBase;
     mBase += size;
 
-    shmDEBUG("The base was extended into a new memory segment: ptr=" << ADDR(ptr));
+    memDEBUG("The base was extended into a new memory segment: ptr=" << ADDR(ptr));
     VERIFY_MALLOCPAGE_ALIGNED(ptr); // Verify MALLOCPAGE-alignment
     return ptr;
 }
@@ -1180,7 +1180,7 @@ inline void ShmAlloc::recycleMemory(char* ptr, std::size_t size)
         VERIFY_MALLOCPAGE_ALIGNED(ptr);
         VERIFY_MALLOCPAGE_ALIGNED(size);
 
-        shmDEBUG("Recycling " << SIZE(size) << " bytes at " << ADDR(ptr) 
+        memDEBUG("Recycling " << SIZE(size) << " bytes at " << ADDR(ptr) 
                  << " (" << (size/MALLOCPAGE) << " page(s))");
         std::size_t available = (size <= sizeof(BlockHead*) ? 0 : size - sizeof(BlockHead*));
 
@@ -1188,7 +1188,7 @@ inline void ShmAlloc::recycleMemory(char* ptr, std::size_t size)
         if(available < mBlocks[mFirstLargeSlot].blockSize)
         {
             dumpedMemory += size;   // Throw away remaining
-            shmDEBUG("Dumped " << SIZE(size) << " bytes at " << ADDR(ptr));
+            memDEBUG("Dumped " << SIZE(size) << " bytes at " << ADDR(ptr));
             break;
         }
 
@@ -1201,7 +1201,7 @@ inline void ShmAlloc::recycleMemory(char* ptr, std::size_t size)
         while(block->blockSize > (std::size_t)available)
             block--;
 
-        shmDEBUG("Giving memory at " << ADDR(ptr) << " to block " << SIZE(block->blockSize));
+        memDEBUG("Giving memory at " << ADDR(ptr) << " to block " << SIZE(block->blockSize));
 
         // We need to link the new memory onto this chain.
         // To do that point the base of the new page(s) to the block header.
@@ -1224,12 +1224,12 @@ inline void ShmAlloc::recycleMemory(char* ptr, std::size_t size)
         // the memory address 'ptr' to the next MALLOCPAGE-byte boundary
         std::size_t padding = PADDING_TO_MALLOCPAGE(ptr);
 
-        //shmDEBUG("ptr=" << ADDR(ptr) << ", padding=" << SIZE(padding));
+        //memDEBUG("ptr=" << ADDR(ptr) << ", padding=" << SIZE(padding));
 
         ptr += padding;
         size -= padding;
 
-        shmDEBUG("Remaining to recycle " << SIZE(size) << " bytes at " << ADDR(ptr) 
+        memDEBUG("Remaining to recycle " << SIZE(size) << " bytes at " << ADDR(ptr) 
                  << " (" << (size/MALLOCPAGE) << " page(s))");
 
         // Update "chain dust" (8-byte page headers and block ends)
@@ -1344,7 +1344,7 @@ inline bool ShmAlloc::postForkReset()
     ShmLock lock(&mSharedData->lock, 180000, gCurrentPid);
     if(!lock)
     {
-        shmERROR( "Pid " << getpid() << " failed to get lock for allocator '" << getName() << "'.");
+        memERROR( "Pid " << getpid() << " failed to get lock for allocator '" << getName() << "'.");
         return false;
     }
 
@@ -1405,7 +1405,7 @@ inline std::size_t ShmAlloc::getRSS() const
     // Get the system page size
     if(mSysPageSize == 0)
     {
-        shmERROR("Unable to calculate RSS; sysconf(_SC_PAGESIZE) returned an invalid value.");
+        memERROR("Unable to calculate RSS; sysconf(_SC_PAGESIZE) returned an invalid value.");
         return 0;
     }
 
@@ -1417,7 +1417,7 @@ inline std::size_t ShmAlloc::getRSS() const
     std::unique_ptr<unsigned char[]> residencyStatusArray(new (std::nothrow) unsigned char[numPages]);
     if(!residencyStatusArray)
     {
-        shmERROR("Failed to allocate residency status buffer of " << numPages << " bytes");
+        memERROR("Failed to allocate residency status buffer of " << numPages << " bytes");
         return 0;
     }
 
@@ -1428,7 +1428,7 @@ inline std::size_t ShmAlloc::getRSS() const
     if(mincore(mStart, length, residencyStatusArray.get()) == -1)
     {
         std::string errmsg = strerror(errno);
-        shmERROR("mincore() failed: " << errmsg << ".");
+        memERROR("mincore() failed: " << errmsg << ".");
         return 0;
     }
 
@@ -1444,7 +1444,7 @@ inline std::size_t ShmAlloc::getRSS() const
 
     // Calculate total resident bytes
     size_t rss = numResidentPages * mSysPageSize;
-    shmINFO("Total RAM (RSS pages) size " << rss);
+    memINFO("Total RAM (RSS pages) size " << rss);
     return rss;
 }
 
@@ -1458,7 +1458,7 @@ inline std::size_t ShmAlloc::getRSS() const
 inline ShmAlloc* ShmAlloc::Create(const std::string& name, void* start, void* stop,
                                   bool verbose/*=false*/)
 {
-    shmVERBOSE("Create new mapping"
+    memVERBOSE("Create new mapping"
             << ": name='" << name << "'"
             << ", start=" << start
             << ", stop=" << stop);
@@ -1466,14 +1466,14 @@ inline ShmAlloc* ShmAlloc::Create(const std::string& name, void* start, void* st
     // The Allocator memory address range must be properly alinged to support Allocator table
     if(!start || (uint64_t)start & ALLOC_BUCKET_ALIGNMENT_MASK)
     {
-        shmERROR("Allocator '" << name << "' start address " << start
+        memERROR("Allocator '" << name << "' start address " << start
                  << " is not " << SIZE(ALLOC_BUCKET_ALIGNMENT) << " aligned.");
         return nullptr;
     }
 
     if(!stop || (uint64_t)stop & ALLOC_BUCKET_ALIGNMENT_MASK)
     {
-        shmERROR("Allocator '" << name << "' stop address " << stop
+        memERROR("Allocator '" << name << "' stop address " << stop
                  << " is not " << SIZE(ALLOC_BUCKET_ALIGNMENT) << " aligned.");
         return nullptr;
     }
@@ -1483,7 +1483,7 @@ inline ShmAlloc* ShmAlloc::Create(const std::string& name, void* start, void* st
     if(usedBy)
     {
         // Allocator conflict detected
-        shmERROR("Allocator memory range conflict " << usedBy
+        memERROR("Allocator memory range conflict " << usedBy
                  << " allocator '" << name << "' and '" << usedBy->getName() << "'.");
         return nullptr;
     }
@@ -1492,7 +1492,7 @@ inline ShmAlloc* ShmAlloc::Create(const std::string& name, void* start, void* st
     std::size_t size = (std::uintptr_t)stop - (std::uintptr_t)start;
     if(size < MALLOCPAGE)
     {
-        shmERROR("Allocator memory address range is less than the minimum " << SIZE(MALLOCPAGE)
+        memERROR("Allocator memory address range is less than the minimum " << SIZE(MALLOCPAGE)
                  << ": name='" << name << "'"
                  << ", start=" << start
                  << ", stop=" << stop
@@ -1509,7 +1509,7 @@ inline ShmAlloc* ShmAlloc::Create(const std::string& name, void* start, void* st
     if(addr == MAP_FAILED)
     {
         std::string errmsg = strerror(errno);
-        shmERROR("mmap() failed, start = " << start
+        memERROR("mmap() failed, start = " << start
                  << ", size = " << size << ": " << errmsg << ".");
         return nullptr;
     }
@@ -1520,11 +1520,11 @@ inline ShmAlloc* ShmAlloc::Create(const std::string& name, void* start, void* st
         if(munmap(addr, size) != 0)
         {
             std::string errmsg = strerror(errno);
-            shmERROR("munmap failed, addr = " << addr
+            memERROR("munmap failed, addr = " << addr
                      << ", size = " << size << ": " << errmsg << ".");
         }
 
-        shmERROR("Error mapping memory. Allocator " << name
+        memERROR("Error mapping memory. Allocator " << name
                  << " requested address " << start
                  << " but received address " << addr << ".");
         return nullptr;
@@ -1536,12 +1536,12 @@ inline ShmAlloc* ShmAlloc::Create(const std::string& name, void* start, void* st
     {
         // This might not be fatal, but means the optimization won't happen
         std::string errmsg = strerror(errno);
-        shmERROR("madvise(MADV_DONTDUMP) failed, addr = " << addr
+        memERROR("madvise(MADV_DONTDUMP) failed, addr = " << addr
                  << ", size = " << size << ": " << errmsg << ".");
     }
 
     // Success. We have new mapping.
-    shmVERBOSE("New mapping '" << name << "' for " << SIZE(size) << " bytes at " << ADDR(addr));
+    memVERBOSE("New mapping '" << name << "' for " << SIZE(size) << " bytes at " << ADDR(addr));
 
     // Create the local allocator.
     //int flags = ALIGN4BYTES;
@@ -1550,11 +1550,11 @@ inline ShmAlloc* ShmAlloc::Create(const std::string& name, void* start, void* st
     ShmAlloc* al = new (std::nothrow) ShmAlloc(name, flags, start, stop);
     if(!al)
     {
-        shmERROR("Out of memory creating allocator " << name);
+        memERROR("Out of memory creating allocator " << name);
         if(munmap(addr, size) != 0)
         {
             std::string errmsg = strerror(errno);
-            shmERROR("munmap failed, addr = " << ADDR(addr)
+            memERROR("munmap failed, addr = " << ADDR(addr)
                      << ", size = " << SIZE(size) << ": " << errmsg << ".");
         }
         return nullptr;
@@ -1564,7 +1564,7 @@ inline ShmAlloc* ShmAlloc::Create(const std::string& name, void* start, void* st
     // TODO: error handling if failed
     if(!SetAllocator(al, true))
     {
-        shmERROR("Error adding allocator '" << name << "' to the global allocators table."
+        memERROR("Error adding allocator '" << name << "' to the global allocators table."
                  << " Either start address " << ADDR(start) << " or stop address " << ADDR(stop)
                  << " are not 16MB aligned.");
     }
@@ -1594,7 +1594,7 @@ inline ShmAlloc* ShmAlloc::Create(const std::string& name, std::size_t size,
     // Allocator range must be at least MALLOCPAGE long
     if(size < MALLOCPAGE)
     {
-        shmERROR("Allocator size is less than the minimum " << SIZE(MALLOCPAGE)
+        memERROR("Allocator size is less than the minimum " << SIZE(MALLOCPAGE)
                  << ": name='" << name << "'"
                  << ", size=" << size);
         return nullptr;
@@ -1616,16 +1616,16 @@ inline ShmAlloc* ShmAlloc::Create(const std::string& name, std::size_t size,
     if(addr == MAP_FAILED) 
     {
         std::string errmsg = strerror(errno);
-        shmERROR("mmap() failed, size = " << SIZE(allocationSize) << ": " << errmsg << ".");
+        memERROR("mmap() failed, size = " << SIZE(allocationSize) << ": " << errmsg << ".");
         return nullptr;
     }
 
-    shmVERBOSE("mmap() allocated base address: " << ADDR(addr));
+    memVERBOSE("mmap() allocated base address: " << ADDR(addr));
 
     // Calculate the next ALIGNMENT-aligned address.
     char* alignedAddr = (char*)(((uint64_t)addr + ALIGNMENT - 1) & ~(ALIGNMENT - 1));
 
-    shmVERBOSE("Calculated aligned address: " << ADDR(alignedAddr));
+    memVERBOSE("Calculated aligned address: " << ADDR(alignedAddr));
 
     // Unmap the region *before* the aligned address.
     std::size_t prefixSize = alignedAddr - addr;
@@ -1634,7 +1634,7 @@ inline ShmAlloc* ShmAlloc::Create(const std::string& name, std::size_t size,
         if(munmap(addr, prefixSize) == -1) 
         {
             std::string errmsg = strerror(errno);
-            shmERROR("munmap() failed to unmap prefix"
+            memERROR("munmap() failed to unmap prefix"
                      << ", addr = " << ADDR(addr)
                      << ", size = " << SIZE(prefixSize) << ": " << errmsg << "."); // TODO
 
@@ -1642,7 +1642,7 @@ inline ShmAlloc* ShmAlloc::Create(const std::string& name, std::size_t size,
             if(munmap(alignedAddr, allocationSize - prefixSize) == -1) 
             {
                 std::string errmsg = strerror(errno);
-                shmERROR("munmap() failed to unmap remaining part after prefix munmap failure"
+                memERROR("munmap() failed to unmap remaining part after prefix munmap failure"
                         << ", addr=" << ADDR(alignedAddr)
                         << ", size=" << SIZE(allocationSize - prefixSize) << ": " << errmsg << ".");
             }
@@ -1652,7 +1652,7 @@ inline ShmAlloc* ShmAlloc::Create(const std::string& name, std::size_t size,
             // crashWithCoreDump(....); // TODO: should we abort?
             return nullptr;
         }
-        shmVERBOSE("Unmapped " << prefixSize << " bytes before aligned address.");
+        memVERBOSE("Unmapped " << prefixSize << " bytes before aligned address.");
     }
 
     // Unmap the region *after* the desired N bytes from the aligned address.
@@ -1664,7 +1664,7 @@ inline ShmAlloc* ShmAlloc::Create(const std::string& name, std::size_t size,
         if(munmap(suffixAddr, suffixSize) == -1) 
         {
             std::string errmsg = strerror(errno);
-            shmERROR("munmap() failed to unmap suffix"
+            memERROR("munmap() failed to unmap suffix"
                      << ", addr = " << ADDR(suffixAddr)
                      << ", size = " << SIZE(suffixSize) << ": " << errmsg << "."); // TODO
 
@@ -1672,7 +1672,7 @@ inline ShmAlloc* ShmAlloc::Create(const std::string& name, std::size_t size,
             if(munmap(alignedAddr, size) == -1) 
             {
                 std::string errmsg = strerror(errno);
-                shmERROR("munmap() failed to unmap remaining part after suffix munmap failure"
+                memERROR("munmap() failed to unmap remaining part after suffix munmap failure"
                          << ", addr=" << ADDR(alignedAddr)
                          << ", size=" << SIZE(size) << ": " << errmsg << ".");
             }
@@ -1682,7 +1682,7 @@ inline ShmAlloc* ShmAlloc::Create(const std::string& name, std::size_t size,
             // crashWithCoreDump(....); // TODO: should we abort?
             return nullptr;
         }
-        shmVERBOSE("Unmapped " << suffixSize << " bytes after desired size.");
+        memVERBOSE("Unmapped " << suffixSize << " bytes after desired size.");
     }
 
     // We're using mmap without MAP_FIXED (e.g., mmap(nullptr, ...)), so the OS should
@@ -1692,13 +1692,13 @@ inline ShmAlloc* ShmAlloc::Create(const std::string& name, std::size_t size,
     if(usedBy)
     {
         // Allocator conflict detected
-        shmERROR("Allocator memory range conflict " << usedBy
+        memERROR("Allocator memory range conflict " << usedBy
                  << " allocator '" << name << "' and '" << usedBy->getName() << "'.");
 
         if(munmap(alignedAddr, size) != 0)
         {
             std::string errmsg = strerror(errno);
-            shmERROR("munmap failed, addr = " << ADDR(alignedAddr)
+            memERROR("munmap failed, addr = " << ADDR(alignedAddr)
                      << ", size = " << SIZE(size) << ": " << errmsg << ".");
         }
         return nullptr;
@@ -1710,12 +1710,12 @@ inline ShmAlloc* ShmAlloc::Create(const std::string& name, std::size_t size,
     {
         // This might not be fatal, but means the optimization won't happen
         std::string errmsg = strerror(errno);
-        shmERROR("madvise(MADV_DONTDUMP) failed, addr = " << addr
+        memERROR("madvise(MADV_DONTDUMP) failed, addr = " << addr
                  << ", size = " << size << ": " << errmsg << ".");
     }
 
     // Success. We have new mapping.
-    shmVERBOSE("New mapping '" << name << "' for " << SIZE(size) << " bytes at " << ADDR(alignedAddr));
+    memVERBOSE("New mapping '" << name << "' for " << SIZE(size) << " bytes at " << ADDR(alignedAddr));
 
     // Create the local allocator.
     //int flags = ALIGN4BYTES;
@@ -1724,11 +1724,11 @@ inline ShmAlloc* ShmAlloc::Create(const std::string& name, std::size_t size,
     ShmAlloc* al = new (std::nothrow) ShmAlloc(name, flags, alignedAddr, alignedAddr + size);
     if(!al)
     {
-        shmERROR("Out of memory creating allocator " << name);
+        memERROR("Out of memory creating allocator " << name);
         if(munmap(alignedAddr, size) != 0)
         {
             std::string errmsg = strerror(errno);
-            shmERROR("munmap failed, addr = " << ADDR(alignedAddr)
+            memERROR("munmap failed, addr = " << ADDR(alignedAddr)
                      << ", size = " << SIZE(size) << ": " << errmsg << ".");
         }
         return nullptr;
@@ -1738,7 +1738,7 @@ inline ShmAlloc* ShmAlloc::Create(const std::string& name, std::size_t size,
     // TODO: error handling if failed
     if(!SetAllocator(al, true))
     {
-        shmERROR("Error adding allocator '" << name << "' to the global allocators table."
+        memERROR("Error adding allocator '" << name << "' to the global allocators table."
                  << " Either start address " << ADDR(alignedAddr) << " or stop address " << ADDR(alignedAddr + size)
                  << " are not 16MB aligned.");
     }

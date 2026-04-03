@@ -7,8 +7,8 @@
 #include <random>
 
 static bool g_InfoEnabled = false; // Enable/Disable INFO() logging
-#define INFO(msg)  if(g_InfoEnabled) shmLOG(std::cout, "INFO", msg)
-#define ERROR(msg)                   shmERROR(msg)
+#define INFO(msg)  if(g_InfoEnabled) memLOG(std::cout, "INFO", msg)
+#define ERROR(msg)                   memERROR(msg)
 
 class Data
 {
