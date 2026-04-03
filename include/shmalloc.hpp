@@ -708,9 +708,9 @@ inline int ShmAlloc::findSlot(std::size_t size) const
         // An index to a small objects table is the quotient obtained by dividing 
         // the requested size by a quanta.        
         if(mFlags & ALIGN4BYTES)
-            indx = size >> 2; // = size / 2^2 = size / 4  (4 bytes quanta)
+            indx = static_cast<int>(size >> 2); // = size / 2^2 = size / 4  (4 bytes quanta)
         else
-            indx = size >> 3; // = size / 2^3 = size / 8  (8 bytes quanta)
+            indx = static_cast<int>(size >> 3); // = size / 2^3 = size / 8  (8 bytes quanta)
     }
     else // Large Slot Logic (O(1) complexity) -
     {
@@ -722,7 +722,7 @@ inline int ShmAlloc::findSlot(std::size_t size) const
         // Determine if we are in the "power of 2" bucket or the "1.5 * power of 2" bucket.
         // We check the bit immediately below the highest bit.
         // If it's set (1), the value is in the 1.5x range.
-        int halfStep = (int)((size >> (highBit - 1)) & 1);
+        int halfStep = static_cast<int>((size >> (highBit - 1)) & 1);
 
         // Calculate the "generation" offset.
         // LARGELOG is 11 (2048). We subtract 10 to normalize the exponent 
@@ -732,7 +732,8 @@ inline int ShmAlloc::findSlot(std::size_t size) const
         // Final index assembly.
         // Each generation has 2 slots (the power of 2 and the 1.5x intermediate).
         // The -2 offset aligns the result with the start of the large slot array.
-        indx = mFirstLargeSlot + (generation * 2) + halfStep - 2;
+        // indx = mFirstLargeSlot + (generation * 2) + halfStep - 2;
+        indx = mFirstLargeSlot + (generation << 1) + halfStep - 2;
     }
 
     return indx;
