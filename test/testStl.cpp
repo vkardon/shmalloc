@@ -115,7 +115,7 @@ void TestStlAllocator(int childrenCount, int allocCount)
     std::size_t perProcessSize = sizeof(Data) * allocCount;
     std::size_t totalSize = sizeof(Data) * objTotal;
 
-    std::cout << " Test name           : " << __func__ << std::endl;
+    std::cout << " ### Test name       : " << __func__ << std::endl;
     std::cout << " Number of processes : " << childrenCount << std::endl;
     std::cout << " Objects per process : " << allocCount << std::endl;
     std::cout << " Total objects       : " << objTotal << std::endl;

@@ -160,12 +160,14 @@ public:
     // Diagnostic Methods (Enable/disable shmINFO and shmDEBUG loggers)
     void enableInfoLog(bool enable) { mEnableInfoLog = enable; }
     void enableDebugLog(bool enable) { mEnableDebugLog = enable; }
+    
+    bool testFindSlot();    // Test the effectiveness of findSlot()
 
 private:
     // Private Methods.
     void initSlots();
-
-    int getMemorySlot(std::size_t size) const;
+    int findSlot_orig(std::size_t size) const;
+    int findSlot(std::size_t size) const;
     char* getMemory(std::size_t size);
     void recycleMemory(char* ptr, std::size_t size);
     bool postForkReset(); // Post-fork reset by child process
@@ -499,6 +501,13 @@ inline ShmAlloc::~ShmAlloc()
 // Objects up to 2KB (MAXSMALL) are allocated in 8-byte or quanta. 
 // Objects bigger than MAXSMALL (2KB) are stored in "half power of 2" pattern.
 //
+// -----------------------------------------------------------------
+// Request Size | Logic Type  | Spacing Max | Internal Waste
+// -----------------------------------------------------------------
+// 0 - 2 KB     | Linear      | 8 bytes     | < 8 bytes
+// 2 KB - 6 GB	| Logarithmic |	1.5 × 2^n   | ~25%
+// -----------------------------------------------------------------
+//
 inline void ShmAlloc::initSlots()
 {
     bool use4bytesAlignment = (mFlags & ALIGN4BYTES);
@@ -570,6 +579,228 @@ inline void ShmAlloc::initSlots()
 }
 
 //
+// Find memory slot corresponding to desired side
+//
+inline int ShmAlloc::findSlot_orig(std::size_t size) const
+{
+    if(size == 0)
+        size = 8; // force to 8 bytes
+
+    // Normalization: Decrement size to handle "edge" cases at bucket boundaries. 
+    // This ensures that requests exactly equal to a bucket's maximum (e.g., 8, 16, 24, 1024) 
+    // map to the correct index. For example, without this, an 8-byte request (8 >> 3) 
+    // would index into the 16-byte slot, wasting an entire memory block for every 
+    // allocation hitting a size-class boundary.
+    size--;
+
+    // Get the block table corresponding to the size of the object.
+    int indx = 0;
+
+    if(size < MAXSMALL)         // exact power of 2 is last 
+    {
+        // An index to a small objects table is the quotient obtained by dividing 
+        // the requested size by a quanta.        
+        if(mFlags & ALIGN4BYTES)
+            indx = size >> 2; // = size / 2^2 = size / 4  (4 bytes quanta)
+        else
+            indx = size >> 3; // = size / 2^3 = size / 8  (8 bytes quanta)
+    }
+    else
+    {
+        // The explanation of this code is below.
+        // // determine log 2 of size
+        // int log = -2;
+        // size >>= LARGELOG - 1;            // toss away known bits
+        // while(size > 3)              // toss then test
+        // {
+        //     log += 2;               // increment if greater
+        //     size >>= 1;
+        // }
+        // block = &mBhLarge[log + size];      // pull table entry
+
+        // First is the normalization step. We know our smallest bucket is 2^11 (2048). 
+        // By right-shifting size by 10 bits, we are effectively dividing it by 2^10 (1024).
+        // This shifts our "window" of analysis. Instead of dealing with values like 2048, 3072, 4096, 
+        // we're now dealing with smaller, more manageable numbers:
+        //
+        // If size is 2048 (2^11), tmp becomes 2048 >> 10 = 2.
+        // If size is 3072 (1.5 times 2^11), tmp becomes 3072 >> 10 = 3.
+        // If size is 4096 (2^12), tmp becomes 4096 >> 10 = 4.
+        // If size is 6144 (1.5 times 2^12), tmp becomes 6144 >> 10 = 6.
+        // If size is 8192 (2^13), tmp becomes 8192 >> 10 = 8.
+        //
+        // And so on... tmp will always be a power of 2 (2, 4, 8, ...) or 1.5 times a power of 2 (3, 6, 12, ...).
+        std::size_t tmp = size >> (LARGELOG - 1); // toss away known bits (LARGELOG is 11, so size >> 10)
+
+        // The log variable acts as an accumulator for the "base" part of our index. 
+        // It starts at -2 as an offset to make the final log + tmp calculation yield 
+        // the correct 0-based index for your sequence. 
+        int log = -2;
+
+        // Note: tmp after this shift alternates between 2 * (some power of 2) and 
+        // 3 * (some power of 2). This tmp now holds the key to identifying which 
+        // "pair" of buckets (2^N or 1.5 * 2^N) size falls into.
+
+        // The while(tmp > 3) loop is the core of the logarithmic mapping. 
+        // It processes tmp as long as it's larger than 3.
+        // - tmp values of 2 or 3 are considered "base cases" that don't need further shifting. 
+        //   They represent the first pair of buckets in our normalized sequence.
+        // - Any tmp greater than 3 (e.g., 4, 6, 8, 12, ...) means size corresponds 
+        //   to a bucket beyond the initial 2^11 and 1.5 times 2^11 range.
+        while(tmp > 3)        // toss then test
+        {
+            // Purpose: These two lines work together to scale log and reduce tmp.
+
+            // log += 2 :
+            //    For every time tmp is halved, we add 2 to log. Why 2? Because our indices 
+            //    jump by 2 for each full power-of-two group.
+            //     - Index 0 (2^11) to Index 2 (2^12) is a jump of +2.
+            //     - Index 2 (2^12) to Index 4 (2^13) is a jump of +2.
+            //    This ensures log accurately tracks the "base" index corresponding to the power-of-two level.
+            log += 2;         // increment if greater
+
+            // tmp >>= 1 :
+            //    This halves tmp in each iteration. This effectively counts how many times 
+            //    tmp needs to be divided by 2 to get back to the 2 or 3 range. Each division 
+            //    by 2 in tmp corresponds to moving to the next higher power of 2 in our original 
+            //    sequence.
+            tmp >>= 1;
+        }
+
+        // The final index calculation.
+        // After the while loop, tmp will be either 2 or 3.
+        // - If tmp is 2, it means the size (after normalization and shifting) 
+        //   corresponds to a 2^N bucket.
+        // - If tmp is 3, it means the size (after normalization and shifting) 
+        //   corresponds to a 1.5 times 2^N bucket.
+        //
+        // The log variable has accumulated the necessary offset based on how many 
+        // "power-of-two generations" (tmp >>= 1) we passed through.
+        //
+        // Adding log and tmp precisely yields the 0-based index for the bucket that 
+        // is greater than or equal to size.
+        indx = mFirstLargeSlot + (log + tmp);
+    }
+
+    return indx;
+}
+
+//
+// Find memory slot corresponding to desired side
+//
+inline int ShmAlloc::findSlot(std::size_t size) const
+{
+    if(size == 0)
+        size = 8;
+
+    // Normalization: Decrement size to handle "edge" cases at bucket boundaries. 
+    // This ensures that requests exactly equal to a bucket's maximum (e.g., 8, 16, 24, 1024) 
+    // map to the correct index. For example, without this, an 8-byte request (8 >> 3) 
+    // would index into the 16-byte slot, wasting an entire memory block for every 
+    // allocation hitting a size-class boundary.
+    size--;
+
+    // Get the block table corresponding to the size of the object.
+    int indx = 0;
+
+    if(size < MAXSMALL)         // exact power of 2 is last 
+    {
+        // An index to a small objects table is the quotient obtained by dividing 
+        // the requested size by a quanta.        
+        if(mFlags & ALIGN4BYTES)
+            indx = size >> 2; // = size / 2^2 = size / 4  (4 bytes quanta)
+        else
+            indx = size >> 3; // = size / 2^3 = size / 8  (8 bytes quanta)
+    }
+    else // Large Slot Logic (O(1) complexity) -
+    {
+        // Find the highest set bit (the floor of log2).
+        // __builtin_clzl counts leading zeros. Subtracting from 63 (for 64-bit size_t) 
+        // gives the index of the highest bit. (e.g., 4096 has bit 12 set).
+        int highBit = 63 - __builtin_clzl(size);
+
+        // Determine if we are in the "power of 2" bucket or the "1.5 * power of 2" bucket.
+        // We check the bit immediately below the highest bit.
+        // If it's set (1), the value is in the 1.5x range.
+        int halfStep = (int)((size >> (highBit - 1)) & 1);
+
+        // Calculate the "generation" offset.
+        // LARGELOG is 11 (2048). We subtract 10 to normalize the exponent 
+        // so that the first large bucket (2048) starts our index count.
+        int generation = highBit - (LARGELOG - 1);
+
+        // Final index assembly.
+        // Each generation has 2 slots (the power of 2 and the 1.5x intermediate).
+        // The -2 offset aligns the result with the start of the large slot array.
+        indx = mFirstLargeSlot + (generation * 2) + halfStep - 2;
+    }
+
+    return indx;
+}
+
+// Test the effectiveness of findSlot():
+// Verify findSlot() returns the smallest available block large enough
+// to accommodate the requested size.
+//
+// Note: For a maximum size of ~6.4 GB, this loop will execute approximately
+// 6.4 billion times. Depending on CPU speed, this may take anywhere from
+// several seconds to a few minutes to complete. This method is intended for
+// one-time validation within a heavy test suite.
+inline bool ShmAlloc::testFindSlot()
+{
+    shmOUT("Starting findSlot geometry validation...");
+
+    // Iterate through every possible size up to the maximum managed block
+    std::size_t maxSupportedSize = mBlocks[mMaxSlots - 1].blockSize;
+    
+    // We test standard boundaries and some random samples to save time, 
+    // or you can do a full linear sweep if maxSupportedSize isn't billions.
+    for(std::size_t size = 1; size <= maxSupportedSize; ++size)
+    {
+        int indx = findSlot(size);
+
+        // Validation A: Bounds Check
+        if(indx < 0 || indx >= mMaxSlots)
+        {
+            shmERROR("Size " << size << " mapped to out-of-bounds slot: " << indx);
+            return false;
+        }
+
+        std::size_t selectedBlockSize = mBlocks[indx].blockSize;
+
+        // Validation B: Does it actually fit?
+        if(selectedBlockSize < size)
+        {
+            shmERROR("Size " << size << " mapped to slot " << indx 
+                     << " which is too small (" << selectedBlockSize << ")");
+            return false;
+        }
+
+        // Validation C: Is it the smallest possible fit? (The most important check)
+        if(indx > 0)
+        {
+            std::size_t prevBlockSize = mBlocks[indx - 1].blockSize;
+            if(prevBlockSize >= size)
+            {
+                shmERROR("Size " << size << " mapped to slot " << indx 
+                         << " (" << selectedBlockSize << "), but could have fit in slot " 
+                         << (indx - 1) << " (" << prevBlockSize << ")");
+                return false;
+            }
+        }
+        
+        // Progress logging for large sweeps
+        if(size % 1000000 == 0) 
+        {
+            shmINFO("Validated up to size: " << size);
+        }
+    }
+
+    shmOUT("SUCCESS: All sizes mapped to the optimal bucket index.");
+    return true;
+}
+
+//
 // Allocate a piece of memory of the indicated size from the process-specific range
 //
 inline void* ShmAlloc::alloc(std::size_t size)
@@ -586,7 +817,7 @@ inline void* ShmAlloc::alloc(std::size_t size)
 
     // Get the memory slot correspondint to the size of the object.
     // Check if an object is already available on the appropriate free chain. 
-    int blockIndx = getMemorySlot(size);
+    int blockIndx = findSlot(size);
     BlockHead* block = &mBlocks[blockIndx];
     char* ptr = block->ptr;
 
@@ -687,107 +918,6 @@ inline void* ShmAlloc::alloc(std::size_t size)
     // victor test end - TODO: Temporarily collecting statistics
 
     return ptr;  // Return user's block address
-}
-
-//
-// Find memory slot corresponding to desired side
-//
-inline int ShmAlloc::getMemorySlot(std::size_t size) const
-{
-    if(size == 0)
-        size = 8; // force to 8 bytes
-
-    // Get the block table correspondint to the size of the object.
-    size--; // TODO: why --size?
-    int indx = 0;
-
-    if(size < MAXSMALL)         // exact power of 2 is last 
-    {
-        // An index to a small objects table is the quotient obtained by dividing 
-        // the requested size by a quanta.        
-        if(mFlags & ALIGN4BYTES)
-            indx = size >> 2; // = size / 2^2 = size / 4  (4 bytes quanta)
-        else
-            indx = size >> 3; // = size / 2^3 = size / 8  (8 bytes quanta)
-    }
-    else
-    {
-        // The explanation of this code is below.
-        // // determine log 2 of size
-        // int log = -2;
-        // size >>= LARGELOG - 1;            // toss away known bits
-        // while(size > 3)              // toss then test
-        // {
-        //     log += 2;               // increment if greater
-        //     size >>= 1;
-        // }
-        // block = &mBhLarge[log + size];      // pull table entry
-
-        // First is the normalization step. We know our smallest bucket is 2^11 (2048). 
-        // By right-shifting size by 10 bits, we are effectively dividing it by 2^10 (1024).
-        // This shifts our "window" of analysis. Instead of dealing with values like 2048, 3072, 4096, 
-        // we're now dealing with smaller, more manageable numbers:
-        //
-        // If size is 2048 (2^11), tmp becomes 2048 >> 10 = 2.
-        // If size is 3072 (1.5 times 2^11), tmp becomes 3072 >> 10 = 3.
-        // If size is 4096 (2^12), tmp becomes 4096 >> 10 = 4.
-        // If size is 6144 (1.5 times 2^12), tmp becomes 6144 >> 10 = 6.
-        // If size is 8192 (2^13), tmp becomes 8192 >> 10 = 8.
-        //
-        // And so on... tmp will always be a power of 2 (2, 4, 8, ...) or 1.5 times a power of 2 (3, 6, 12, ...).
-        std::size_t tmp = size >> (LARGELOG - 1); // toss away known bits (LARGELOG is 11, so size >> 10)
-
-        // The log variable acts as an accumulator for the "base" part of our index. 
-        // It starts at -2 as an offset to make the final log + tmp calculation yield 
-        // the correct 0-based index for your sequence. 
-        int log = -2;
-
-        // Note: tmp after this shift alternates between 2 * (some power of 2) and 
-        // 3 * (some power of 2). This tmp now holds the key to identifying which 
-        // "pair" of buckets (2^N or 1.5 * 2^N) size falls into.
-
-        // The while(tmp > 3) loop is the core of the logarithmic mapping. 
-        // It processes tmp as long as it's larger than 3.
-        // - tmp values of 2 or 3 are considered "base cases" that don't need further shifting. 
-        //   They represent the first pair of buckets in our normalized sequence.
-        // - Any tmp greater than 3 (e.g., 4, 6, 8, 12, ...) means size corresponds 
-        //   to a bucket beyond the initial 2^11 and 1.5 times 2^11 range.
-        while(tmp > 3)        // toss then test
-        {
-            // Purpose: These two lines work together to scale log and reduce tmp.
-
-            // log += 2 :
-            //    For every time tmp is halved, we add 2 to log. Why 2? Because our indices 
-            //    jump by 2 for each full power-of-two group.
-            //     - Index 0 (2^11) to Index 2 (2^12) is a jump of +2.
-            //     - Index 2 (2^12) to Index 4 (2^13) is a jump of +2.
-            //    This ensures log accurately tracks the "base" index corresponding to the power-of-two level.
-            log += 2;         // increment if greater
-
-            // tmp >>= 1 :
-            //    This halves tmp in each iteration. This effectively counts how many times 
-            //    tmp needs to be divided by 2 to get back to the 2 or 3 range. Each division 
-            //    by 2 in tmp corresponds to moving to the next higher power of 2 in our original 
-            //    sequence.
-            tmp >>= 1;
-        }
-
-        // The final index calculation.
-        // After the while loop, tmp will be either 2 or 3.
-        // - If tmp is 2, it means the size (after normalization and shifting) 
-        //   corresponds to a 2^N bucket.
-        // - If tmp is 3, it means the size (after normalization and shifting) 
-        //   corresponds to a 1.5 times 2^N bucket.
-        //
-        // The log variable has accumulated the necessary offset based on how many 
-        // "power-of-two generations" (tmp >>= 1) we passed through.
-        //
-        // Adding log and tmp precisely yields the 0-based index for the bucket that 
-        // is greater than or equal to size.
-        indx = mFirstLargeSlot + (log + tmp);
-    }
-
-    return indx;
 }
 
 //

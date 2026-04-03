@@ -6,6 +6,7 @@
 // Forward declarations
 void TestAllocator(int childrenCount, int allocCount);
 void TestStlAllocator(int childrenCount, int allocCount);
+void TestAllocatorSlots();
 
 int main()
 {
@@ -22,6 +23,7 @@ int main()
  
     TestAllocator(childrenCount, allocCount);
     TestStlAllocator(childrenCount, allocCount);
+    TestAllocatorSlots();
     return 0;
 }
 

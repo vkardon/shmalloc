@@ -88,7 +88,7 @@ void TestAllocator(int childrenCount, int allocCount)
 {
     std::string separtor("----------------------------------------------------");
     std::cout << separtor << std::endl;
-    std::cout << " Test name           : " << __func__ << std::endl;
+    std::cout << " ### Test name       : " << __func__ << std::endl;
     std::cout << " Number of processes : " << childrenCount << std::endl;
     std::cout << " Objects per process : " << allocCount << std::endl;
     std::cout << " Total objects       : " << allocCount * childrenCount << std::endl;
@@ -185,4 +185,29 @@ void TestAllocator(int childrenCount, int allocCount)
     // alloc->audit(stdout, std::string("From ") + __func__);
 }
 
+void TestAllocatorSlots()
+{
+    // TODO: Create() to return nullptr when size is less then 16 MB 
+    // as start / stop addresses must be 16MB aligned.
+
+    std::string separtor("----------------------------------------------------");
+    std::cout << separtor << std::endl;
+    std::cout << " ### Test name       : " << __func__ << std::endl;
+    std::cout << separtor << std::endl;
+
+    StopWatch sw;
+
+    // Create a position-independent allocator that uses a specified size.
+    // Note: Allocator size is not relevant for this test.
+    constexpr std::size_t size = 1024 * 1024 * 16; // 16MB
+    std::unique_ptr<mem::ShmAlloc> alloc(mem::ShmAlloc::Create("MyAllocator", size));
+    if(!alloc)
+    {
+        std::cerr << "Failed to create allocator: size=" << size << std::endl;
+        return;
+    }
+
+    // Run the test
+    alloc->testFindSlot();
+}
 
