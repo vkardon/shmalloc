@@ -233,158 +233,153 @@ private:
         return (-(reinterpret_cast<uint64_t>(val) & MALLOCPAGE_MASK)) & MALLOCPAGE_MASK;
     }
 
-    // Helper class to synchronize access to the allocator's shared data (locks mSharedData)
-    class ShmLocker
+    friend class ShmLock;
+};
+// End of ShmAlloc class
+
+// Helper class to synchronize access to the allocator's shared data (locks mSharedData)
+class ShmLock
+{
+public:
+    ShmLock(ShmAlloc::SharedData* dataIn, int waitMs, pid_t pidIn)
     {
-    public:
-//#define ORIG
-#ifdef ORIG
-        ShmLocker(SharedData* dataIn, int wait, pid_t pidIn)
+        if(dataIn == nullptr)
+            return;
+
+        pid_t groupPid = getpgrp(); // Process group PID
+
+        struct timespec start;
+        clock_gettime(CLOCK_MONOTONIC, &start);
+
+        int spin_count = 0;
+        unsigned char expected = 0;
+        unsigned char desired = 0xff;
+
+        while(true)
         {
-            // Attempts to acquire a lock. If the lock is held, waits for up to "wait"
-            // milliseconds for it to become available.
-            //
-            // A simple Ethernet-style backoff (delay) algorithm is used to minimize collisions
-            // and contention for the lock. Given the potentially very fast turnaround times
-            // (bounces) of lock requests, we attempt to estimate the operating system's
-            // processing time for each request to optimize delay periods.
-            //
-            // TODO:
-            // The id of the process holding the lock is stored. This allows subsequent
-            // callers to detect if the lock-holding process has unexpectedly terminated (died),
-            // enabling robust lock recovery.
-            unsigned char oldvalue{0};  // Old value of lock
-            useconds_t delay{0};
-            while(true)
-            {
-                oldvalue = __sync_fetch_and_or(&dataIn->lock, (unsigned char)0xff);
-                if(oldvalue == 0)
-                {
-                    // we got the lock
-                    dataIn->lockPid = pidIn; // Assert our ownership
-                    data = dataIn;
-                    pid = pidIn;
-                    break;
-                }
-                if(wait <= 0)
-                    break;
-                delay = (useconds_t)((random() & 0x3) * 1000); // 0-3 ms delay
-                wait -= 1 + (delay / 1000); // Add in service time
-                usleep(delay);
-            }
-        }
-#else
-        ShmLocker(SharedData* dataIn, int waitMs, pid_t pidIn)
-        {
-            if(dataIn == nullptr)
-                return;
-
-            struct timespec start;
-            clock_gettime(CLOCK_MONOTONIC, &start);
-
-            int spin_count = 0;
-            unsigned char expected = 0;
-            unsigned char desired = 0xff;
-
-            while(true)
+            // Test-and-Test-and-Set Optimization:
+            // Check the lock state with a simple LOAD before trying a heavy CAS.
+            // This prevents unnecessary "Exclusive" cache-line invalidations.
+            if (__atomic_load_n(&dataIn->lock, __ATOMIC_RELAXED) == 0)
             {
                 // Atomically atempts to acquire a lock: Try to swap 0 for 0xff
                 // Using __atomic_compare_exchange_n for Acquire/Release semantics
                 expected = 0;
-                if(__atomic_compare_exchange_n(&dataIn->lock, &expected, desired, false, __ATOMIC_ACQUIRE, __ATOMIC_RELAXED))
+                if (__atomic_compare_exchange_n(&dataIn->lock, &expected, desired, false, __ATOMIC_ACQUIRE, __ATOMIC_RELAXED))
                 {
-                    // We secured the lock bit. Now set the owner PID.
-                    // Note: Final fence to ensure PID is visible before we return
-                    dataIn->lockPid = pidIn;
+                    // Secured the lock bit. Now set the owner PID.
+                    __atomic_store_n(&dataIn->lockPid, pidIn, __ATOMIC_RELAXED);
+                    
+                    // Fence ensures PID is visible to others before we return 
+                    // and start modifying the shared data payload.
                     __atomic_thread_fence(__ATOMIC_RELEASE);
 
                     data = dataIn;
-                    pid = pidIn;
+                    ownerPid = pidIn;
                     break;
                 }
-
-                // Recovery: Check if the lock-holding process has unexpectedly terminated (died)
-                pid_t currentOwner = dataIn->lockPid;
-                if(currentOwner != 0 && currentOwner != pidIn)
-                {
-                    // kill(pid, 0) checks if the process is still alive in the OS table
-                    if(kill(currentOwner, 0) == -1 && errno == ESRCH)
-                    {
-                        // The owner died without releasing. Force-reset the lock.
-                        // This allows the NEXT loop iteration to attempt to grab it.
-                        dataIn->lockPid = 0;
-                        __atomic_store_n(&dataIn->lock, 0, __ATOMIC_RELEASE);
-                        continue;
-                    }
-                }
-
-                // Timeout calculation
-                struct timespec now;
-                clock_gettime(CLOCK_MONOTONIC, &now);
-                long elapsedMs = (now.tv_sec - start.tv_sec) * 1000 + (now.tv_nsec - start.tv_nsec) / 1000000;
-                if(elapsedMs >= waitMs)
-                    break; // Timeout reached
-
-                // Multi-stage backoff
-                if(spin_count < 100)
-                {
-                    // Stage A: "Hot" spin with CPU hint (stays in userspace)
-                    // Portable pause/yield helper:
-                    #if defined(__i386__) || defined(__x86_64__)
-                        __builtin_ia32_pause();
-                    #elif defined(__arm__) || defined(__aarch64__)
-                        asm volatile("yield" ::: "memory");
-                    #else
-                        std::this_thread::yield();
-                    #endif
-
-                    spin_count++;
-                }
-                else if(spin_count < 200)
-                {
-                    // Stage B: Yield to other processes (prevents priority inversion)
-                    //sched_yield();
-                    std::this_thread::yield();
-                    spin_count++;
-                }
-                else
-                {
-                    // Stage C: Physical Sleep (prevents 100% CPU usage on long waits)
-                    useconds_t delay = (useconds_t)((random() % 1000) + 500); // 0.5 - 1.5ms
-                    usleep(delay);
-                    // We don't reset spin_count here to keep us in the "Sleep" stage
-                    // until the lock is acquired or timeout hits.
-                }
-            } // end of while() loop
-        }
-#endif
-
-        ~ShmLocker()
-        {
-            // Only release if we actually successfully acquired the lock
-            if(data != nullptr && data->lockPid == pid)
-            {
-                // Resetting lockPid first, then releasing the lock bit.
-                data->lockPid = 0;
-                __atomic_store_n(&data->lock, 0, __ATOMIC_RELEASE);
             }
+
+            // Recovery: Check if the lock-holding process has unexpectedly terminated (died)
+            //pid_t currentOwner = dataIn->lockPid;
+            pid_t currentOwner = __atomic_load_n(&dataIn->lockPid, __ATOMIC_RELAXED);
+            if(currentOwner != 0 && currentOwner != pidIn)
+            {
+                bool shouldReset = false;
+
+                // kill(pid, 0) checks if the process is still alive in the OS table
+                if(kill(currentOwner, 0) == -1 && errno == ESRCH)
+                {
+                    // ESRCH = No process with that PID exists.
+                    shouldReset = true;
+                }
+                // PID exists, but is it a stranger (recycled PID)?
+                // We check if the PID belongs to our Process Group.
+                else if(getpgid(currentOwner) != groupPid)
+                {
+                    // PID exists, but it's not part of our Process Group anymore.
+                    // It is safe to assume our process is dead and PID is recicled.
+                    shouldReset = true;
+                }
+
+                if(shouldReset)
+                {
+                    // The owner died without releasing. Force-reset both the PID and the lock bit.
+                    // This allows the NEXT loop iteration to attempt to grab it.
+                    __atomic_store_n(&dataIn->lockPid, 0, __ATOMIC_RELAXED);
+                    __atomic_store_n(&dataIn->lock, 0, __ATOMIC_RELEASE);
+                    continue;
+                }
+            }
+
+            // Timeout calculation
+            struct timespec now;
+            clock_gettime(CLOCK_MONOTONIC, &now);
+            long elapsedMs = (now.tv_sec - start.tv_sec) * 1000 + (now.tv_nsec - start.tv_nsec) / 1000000;
+            if(elapsedMs >= waitMs)
+                break; // Timeout reached
+
+            // Multi-stage backoff
+            if(spin_count < 100)
+            {
+                // Stage A: "Hot" spin with CPU hint (stays in userspace)
+                // Portable pause/yield helper:
+                #if defined(__i386__) || defined(__x86_64__)
+                    __builtin_ia32_pause();
+                #elif defined(__arm__) || defined(__aarch64__)
+                    asm volatile("yield" ::: "memory");
+                #else
+                    std::this_thread::yield();
+                #endif
+
+                spin_count++;
+            }
+            else if(spin_count < 200)
+            {
+                // Stage B: Yield to other processes (prevents priority inversion)
+                //sched_yield();
+                std::this_thread::yield();
+                spin_count++;
+            }
+            else
+            {
+                // Stage C: Physical Sleep (prevents 100% CPU usage on long waits)
+                useconds_t delay = (useconds_t)((random() % 1000) + 500); // 0.5 - 1.5ms
+                usleep(delay);
+                // We don't reset spin_count here to keep us in the "Sleep" stage
+                // until the lock is acquired or timeout hits.
+            }
+        } // end of while() loop
+    }
+
+    ~ShmLock()
+    {
+        // Only release if we actually successfully acquired the lock
+        if(data != nullptr && __atomic_load_n(&data->lockPid, __ATOMIC_RELAXED) == ownerPid)
+        {
+            // Resetting lockPid first, then releasing the lock bit.
+            __atomic_store_n(&data->lockPid, 0, __ATOMIC_RELAXED);
+            __atomic_store_n(&data->lock, 0, __ATOMIC_RELEASE);
         }
+    }
 
-        explicit operator bool() const { return (data != nullptr); }
+    explicit operator bool() const
+    { 
+        return (data != nullptr);
+        //return (data != nullptr && __atomic_load_n(&data->lockPid, __ATOMIC_RELAXED) == ownerPid); 
+    }
 
-        // Delete the rest of constructors
-        ShmLocker(const ShmLocker&) = delete;
-        ShmLocker(ShmLocker&&) = delete;
-        ShmLocker& operator=(const ShmLocker&) = delete;
-        ShmLocker& operator=(ShmLocker&&) = delete;
+    // Delete the rest of constructors
+    ShmLock(const ShmLock&) = delete;
+    ShmLock(ShmLock&&) = delete;
+    ShmLock& operator=(const ShmLock&) = delete;
+    ShmLock& operator=(ShmLock&&) = delete;
 
-    private:
-        SharedData* data{nullptr};
-        pid_t pid{0};
-    };
-    // End of ShmLocker class
+private:
+    ShmAlloc::SharedData* data{nullptr};
+    pid_t ownerPid{0};
 };
-// End of ShmAlloc class
+// End of ShmLock class
 
 // Define allocator flags
 #define ALIGN4BYTES         0x00000001          // Use 4-bytes alignment for small slots
@@ -981,7 +976,7 @@ inline char* ShmAlloc::getMemory(std::size_t size)
 
     // Note: Acquire lock to synchronize access to mSharedData
     {
-        ShmLocker lock(mSharedData, 180000, gCurrentPid);
+        ShmLock lock(mSharedData, 180000, gCurrentPid);
         if(!lock)
         {
             shmERROR("Pid " << getpid() << ", allocator '" << mName << "' - failed to get lock");
@@ -1230,7 +1225,7 @@ inline bool ShmAlloc::postForkReset()
     for(int i = mMaxSlots - 1; i >= 0; i--)
         mBlocks[i].ptr = nullptr;
 
-    ShmLocker lock(mSharedData, 180000, gCurrentPid);
+    ShmLock lock(mSharedData, 180000, gCurrentPid);
     if(!lock)
     {
         shmERROR( "Pid " << getpid() << " failed to get lock for allocator '" << getName() << "'.");
