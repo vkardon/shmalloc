@@ -78,6 +78,8 @@ int main()
 
 ## License
 
-This project is licensed under the [MIT License](https://www.google.com/search?q=LICENSE).
+This project is licensed under the GNU Affero General Public License v3.0 (AGPL-3.0).
+
+Note to Commercial Users: Because this is an AGPL-licensed C++ library, including these headers in your project typically requires you to release your entire project's source code under the same license if it is used over a network. For custom commercial licensing, please contact vkardon@gmail.com
 
 -----
