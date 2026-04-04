@@ -1,8 +1,11 @@
+// A high-performance IPC nonblocking memory allocator.
+// Copyright (c) 2026 @vkardon
+// Project: https://github.com/vkardon/shmalloc
+// SPDX-License-Identifier: AGPL-3.0-only
 //
-// alloc.hpp
+// alloc.hpp - Shared definitions and base allocator class
 //
-#ifndef __ALLOC_HPP__
-#define __ALLOC_HPP__
+#pragma once
 
 #include <cstdlib>      // std::malloc(), std::free
 #include <limits>       // std::numeric_limits
@@ -313,5 +316,3 @@ inline void operator delete[](void* p, mem::Alloc* al) noexcept
         al ? al->free(p) : std::free(p);
     }
 }
-
-#endif // __ALLOC_HPP__
