@@ -187,9 +187,6 @@ void TestAllocator(int childrenCount, int allocCount)
 
 void TestAllocatorSlots()
 {
-    // TODO: Create() to return nullptr when size is less then 16 MB 
-    // as start / stop addresses must be 16MB aligned.
-
     std::string separtor("----------------------------------------------------");
     std::cout << separtor << std::endl;
     std::cout << " ### Test name       : " << __func__ << std::endl;
@@ -199,8 +196,8 @@ void TestAllocatorSlots()
 
     // Create a position-independent allocator that uses a specified size.
     // Note: Allocator size is not relevant for this test.
-    constexpr std::size_t size = 1024 * 1024 * 16; // 16MB
-    std::unique_ptr<mem::ShmAlloc> alloc(mem::ShmAlloc::Create("MyAllocator", size));
+    constexpr std::size_t size = 1024 * 1024; // 1MB
+    std::unique_ptr<mem::ShmAlloc> alloc(mem::ShmAlloc::Create("MyAllocator", size, true));
     if(!alloc)
     {
         std::cerr << "Failed to create allocator: size=" << size << std::endl;

@@ -749,15 +749,25 @@ inline int ShmAlloc::findSlot(std::size_t size) const
 // one-time validation within a heavy test suite.
 inline bool ShmAlloc::testFindSlot()
 {
-    memOUT("Starting findSlot geometry validation...");
-
-    // Iterate through every possible size up to the maximum managed block
     std::size_t maxSupportedSize = mBlocks[mMaxSlots - 1].blockSize;
-    
-    // We test standard boundaries and some random samples to save time, 
-    // or you can do a full linear sweep if maxSupportedSize isn't billions.
+
+    memOUT("Starting findSlot geometry validation up to " << SIZE(maxSupportedSize) << "...");
+
+    // Define a reporting interval (e.g., every 5% or every 64MB)
+    // 0x4000000 is 64MB, providing frequent but not overwhelming updates.
+    const std::size_t reportInterval = 0x4000000;
+ 
+    // Iterate through every possible size up to the maximum managed block
     for(std::size_t size = 1; size <= maxSupportedSize; ++size)
     {
+        // Progress Reporting (every 64MB)
+        if(size % reportInterval == 0 || size == maxSupportedSize)
+        {
+            int percent = static_cast<int>((size * 100) / maxSupportedSize);
+            std::fprintf(stdout, "[%d] Progress: %d%% (%zu bytes)\r", getpid(), percent, size);
+            std::fflush(stdout); // Ensure it updates on the same line
+        }
+
         int indx = findSlot(size);
 
         // Validation A: Bounds Check
@@ -788,12 +798,6 @@ inline bool ShmAlloc::testFindSlot()
                          << (indx - 1) << " (" << prevBlockSize << ")");
                 return false;
             }
-        }
-        
-        // Progress logging for large sweeps
-        if(size % 1000000 == 0) 
-        {
-            memINFO("Validated up to size: " << size);
         }
     }
 
@@ -1592,17 +1596,22 @@ inline ShmAlloc* ShmAlloc::Create(const std::string& name, uint64_t start, uint6
 inline ShmAlloc* ShmAlloc::Create(const std::string& name, std::size_t size, 
                                   bool verbose/*=false*/)
 {
-    // Allocator range must be at least MALLOCPAGE long
-    if(size < MALLOCPAGE)
-    {
-        memERROR("Allocator size is less than the minimum " << SIZE(MALLOCPAGE)
-                 << ": name='" << name << "'"
-                 << ", size=" << size);
-        return nullptr;
-    }
-
-    // Allocated memory must be properly aligned to support Allocator table
+    // The Allocator start/stop must be aligned to ALLOC_BUCKET_ALIGNMENT 
+    // to support the Allocator table. To ensure this, the requested size 
+    // must be a multiple of ALLOC_BUCKET_ALIGNMENT; if it is not, it will
+    // be rounded up to the nearest alignment boundary.
     constexpr std::size_t ALIGNMENT = ALLOC_BUCKET_ALIGNMENT;
+
+    if(size & (ALIGNMENT - 1))
+    {
+        // The requested size is not multiple to ALIGNMENT and will be rounded up.
+        size_t alignedSize = (size + (ALIGNMENT - 1)) & ~(ALIGNMENT - 1);
+
+        memVERBOSE("Allocator '" << name << "' size " << SIZE(size)
+                   << " is not multiple to " << SIZE(ALIGNMENT)
+                   << " and will be rounded up to " << SIZE(alignedSize) << ".");
+        size = alignedSize;
+    }
 
     // Calculate the required size for mmap.
     // We need enough space to guarantee a ALIGNMENT-aligned block of size.
