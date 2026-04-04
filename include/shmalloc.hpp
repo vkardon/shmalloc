@@ -1,8 +1,11 @@
+// A high-performance IPC nonblocking memory allocator.
+// Copyright (c) 2026 @vkardon
+// Project: https://github.com/vkardon/shmalloc
+// SPDX-License-Identifier: AGPL-3.0-only
 //
-// shmalloc.hpp
+// shmalloc.hpp - Core allocation logic and public interface
 //
-#ifndef __SHMALLOC_HPP__
-#define __SHMALLOC_HPP__
+#pragma once
 
 #include <sys/mman.h>   // For mmap()
 #include <string.h>     // For strerror()
@@ -1771,5 +1774,4 @@ inline void* operator new[](std::size_t size, const std::unique_ptr<mem::ShmAllo
     return operator new[](size, al.get());
 }
 
-#endif // __SHMALLOC_HPP__
 
