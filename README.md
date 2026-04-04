@@ -78,8 +78,12 @@ int main()
 
 ## License
 
-This project is licensed under the GNU Affero General Public License v3.0 (AGPL-3.0).
+This project is licensed under the **GNU Affero General Public License v3.0 (AGPL-3.0)**. 
 
-Note to Commercial Users: Because this is an AGPL-licensed C++ library, including these headers in your project typically requires you to release your entire project's source code under the same license if it is used over a network. For custom commercial licensing, please contact vkardon@gmail.com
+### Open Source Use
+You are free to use, study, and modify this library for open-source projects, provided that any project using these headers is also licensed under the AGPL-3.0 (or a compatible license) and makes its source code available to its users.
+
+### Commercial & Proprietary Use
+Because `shmalloc` is an AGPL-licensed C++ library, including these headers in a proprietary or networked application typically requires you to release your entire project's source code under the same license. If you wish to use this library in a commercial or closed-source environment without these restrictions, a separate commercial license is required. For custom licensing inquiries, private support, or high-performance integration consulting, please contact me via the email address listed on my **[GitHub Profile](https://github.com/vkardon)**.
 
 -----
