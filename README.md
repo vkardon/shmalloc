@@ -4,6 +4,9 @@
 
 `ShmAlloc` is a specialized C++ memory allocator designed for high-concurrency applications using `fork()` for parallelism. It provides a massive, contiguous virtual memory pool where child processes can allocate data concurrently without the overhead of traditional synchronization locks, while the parent retains zero-copy access to all results.
 
+> [!NOTE]
+> While the core logic is stable and follows strict C++ standards, the project is currently in an **Active Development/Alpha** phase and has not yet been deployed in a high-stress production environment.
+
 ## Key Features
 
 * **Virtual Shared Memory Pool:** Reserves a contiguous memory block using `mmap(MAP_SHARED)` that is inherited by child processes via `fork()`.
