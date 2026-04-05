@@ -41,41 +41,90 @@ Unlike traditional allocators that use a global lock or complex thread-local hea
 
 ```cpp
 #include "shmalloc.hpp" // Your main header
+#include <sys/wait.h>
+#include <iostream>
+
+struct Checksum
+{
+    pid_t pid{0};
+    uint32_t value{0};
+};
 
 int main() 
 {
-    // NOTE: Error handling omitted for brevity
+    // Initialize ShmAlloc with a 128MB virtual address range
+    constexpr size_t size = 1024 * 1024 * 128;
+    mem::ShmAlloc* alloc = mem::ShmAlloc::Create("ParallelAllocator", size);
+    if(!alloc)
+        return EXIT_FAILURE;
 
-    // Parent initializes ShmAllocator with a large shared memory pool
-    constexpr size = (1024 * 1024 * 1024 * 256); // 256GB address range
-    std::unique_ptr<shm::ShmAllocator> alloc(shm::ShmAllocator::Create("MyAllocator", size));
+    // Allocate an array of results in shared memory for 4 children.
+    const int numChildren = 4;
+    Checksum** cksumList =  new (alloc) Checksum*[numChildren]{};
+    if(!cksumList)
+        return EXIT_FAILURE;
 
-    // Declare pointer for child process to assign
-    char* data = nullptr;
+    // Spawning children
+    std::cout << "\n--- Parent Forking " << numChildren << " Children... ---" << std::endl;
+    
+    for(int i = 0; i < numChildren; ++i)
+    {
+        pid_t pid = fork();
 
-    // Fork child process(es)
-    pid_t pid = fork();
+        if(pid == 0) 
+        { 
+            // --- Child Process ---
+            // Seed with PID and sleep up to 200ms to demonstrate out-of-order execution
+            srand(getpid());
+            usleep((rand() % 200) * 1000);
 
-    if (pid == 0) 
-    { 
-        // Child process
-        // Child can allocate memory concurrently without locks
-        data = new (alloc) char [2048];
-        // ... use data ...
+            // Each child allocates its own Checksum object.
+            // ShmAlloc's non-blocking lock ensures this is process-safe.
+            Checksum* cksum = new (alloc) Checksum;
 
-        exit(0);
-    } 
-    else if (pid > 0) 
-    { 
-        // Parent process. Wait for children
-        waitpid(pid, nullptr, 0);
+            // Each child performs a simulated calculation
+            cksum->pid = getpid();
+            cksum->value = (0x12345 * (i + 1)) ^ 0xFFFFFFFF;
 
-        // Parent can now directly access memory allocated by child
-        // Use data allocated by child
-        // ..
+            // Store the address in the shared array for the parent to access.
+            cksumList[i] = cksum;
+
+            std::cout << "[Child " << i << "] PID " << cksum->pid << " wrote checksum: 0x"
+                      << std::hex << cksum->value << std::dec << std::endl;
+            
+            exit(EXIT_SUCCESS); // The child process is done
+        }
+        else if(pid < 0)
+        {
+            perror("fork failed");
+            return EXIT_FAILURE;
+        }
     }
 
-    return 0;
+    // Parent Process: Wait for all children to finish
+    for(int i = 0; i < numChildren; ++i)
+    {
+        wait(nullptr);
+    }
+
+    // Parent reports the collected data
+    std::cout << "\n--- Parent Multi-Child Report ---" << std::endl;
+
+    for(int i = 0; i < numChildren; ++i)
+    {
+        Checksum* cksum = cksumList[i];
+        if(cksum)
+        {
+            std::cout << "Slot [" << i << "]: PID " << cksum->pid 
+                    << ", Checksum: 0x" << std::hex << cksum->value << std::dec << std::endl;
+            delete cksum; 
+        }
+    }
+
+    // Clean up
+    delete [] cksumList;
+
+    return EXIT_SUCCESS;
 }
 ```
 
