@@ -131,7 +131,7 @@ protected:
     ShmAlloc& operator=(ShmAlloc&&) = delete;
 
 public:
-    virtual ~ShmAlloc();
+    ~ShmAlloc() override;
 
     // Create a fixed-position allocator using an address range
     static ShmAlloc* Create(const std::string& name, void* start, void* stop, bool verbose=false);
@@ -141,11 +141,11 @@ public:
     static ShmAlloc* Create(const std::string& name, std::size_t size, bool verbose=false);
 
     // Public Allocator class overrides
-    virtual void* alloc(std::size_t size) override;
-    virtual void free(void* ptr) override;
-    virtual const char* getName() const override { return mName.c_str(); }
-    virtual void* getStart() const override { return mStart; }
-    virtual void* getStop() const override { return mStop; }
+    void* alloc(std::size_t size) override;
+    void free(void* ptr) override;
+    const char* getName() const override { return mName.c_str(); }
+    void* getStart() const override { return mStart; }
+    void* getStop() const override { return mStop; }
 
     bool contains(const void* addr) const;  // Check if address is within managed range
     void* getBase() const { return mBase; } // Memory address to be filled next
