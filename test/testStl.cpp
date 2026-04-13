@@ -108,7 +108,7 @@ bool TestStlAllocatorImpl(std::unique_ptr<mem::ShmAlloc>& al, int childrenCount,
 void TestStlAllocator(int childrenCount, int allocCount)
 {
     std::string separtor("----------------------------------------------------");
-    std::cout << separtor << std::endl;
+    std::cout << '\n' << separtor << std::endl;
 
     std::size_t objTotal = allocCount * childrenCount;
     std::size_t objSize = sizeof(Data);

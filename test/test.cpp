@@ -87,7 +87,7 @@ bool TestAllocatorImpl(std::unique_ptr<mem::ShmAlloc>& al, int childrenCount,
 void TestAllocator(int childrenCount, int allocCount)
 {
     std::string separtor("----------------------------------------------------");
-    std::cout << separtor << std::endl;
+    std::cout << '\n' << separtor << std::endl;
     std::cout << " ### Test name       : " << __func__ << std::endl;
     std::cout << " Number of processes : " << childrenCount << std::endl;
     std::cout << " Objects per process : " << allocCount << std::endl;
@@ -188,7 +188,7 @@ void TestAllocator(int childrenCount, int allocCount)
 void TestAllocatorSlots()
 {
     std::string separtor("----------------------------------------------------");
-    std::cout << separtor << std::endl;
+    std::cout << '\n' << separtor << std::endl;
     std::cout << " ### Test name       : " << __func__ << std::endl;
     std::cout << separtor << std::endl;
 

@@ -10,7 +10,9 @@ OBJ_DIR = $(PROJECT_HOME)/_obj
 
 SRCS = $(PROJECT_HOME)/main.cpp \
        $(PROJECT_HOME)/test.cpp \
-       $(PROJECT_HOME)/testStl.cpp
+       $(PROJECT_HOME)/testStl.cpp \
+       $(PROJECT_HOME)/testStress.cpp \
+       $(PROJECT_HOME)/testGeometry.cpp
 
 # Include directories
 INCS = -I$(PROJECT_HOME) -I$(PROJECT_HOME)/../include -I$(PROJECT_HOME)/../utils

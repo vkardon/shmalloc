@@ -7,6 +7,9 @@
 void TestAllocator(int childrenCount, int allocCount);
 void TestStlAllocator(int childrenCount, int allocCount);
 void TestAllocatorSlots();
+void TestAllocatorStress();
+void TestGeometry();
+
 
 int main()
 {
@@ -23,7 +26,12 @@ int main()
  
     TestAllocator(childrenCount, allocCount);
     TestStlAllocator(childrenCount, allocCount);
-    TestAllocatorSlots();
+
+    TestGeometry();
+    TestAllocatorStress();
+    // TestAllocatorSlots();    // this test takes time
+
+    std::cout << std::endl;
     return 0;
 }
 
