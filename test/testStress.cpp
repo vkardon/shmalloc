@@ -8,7 +8,8 @@
 #include "utils.hpp"
 
 // A simple structure to store inside our allocated memory to verify integrity
-struct TestData
+// Note: Ensure TestData is aligned to 8 bytes to avoid alignment faults on some architectures
+struct alignas(8) TestData
 {
     uint32_t processId;
     uint32_t iteration;
@@ -17,25 +18,32 @@ struct TestData
 
 void RunAllocatorStress(mem::ShmAlloc* allocator, int processIndex)
 {
-    // Use a unique seed per process for variety in allocation sizes
-    std::mt19937 generator(static_cast<unsigned int>(getpid()));
-    std::uniform_int_distribution<size_t> sizeDist(8, 1024 * 1024); // 8B to 1MB
+    // unique_seed: PID + index to ensure different processes don't follow the same pattern
+    unsigned int seed = static_cast<unsigned int>(getpid() ^ (processIndex << 16));
+    std::mt19937 generator(seed);
+
+    // Minimum size must be sizeof(TestData) to avoid buffer overflows
+    // Maximum size 1MB to keep the test within the 256GB limit comfortably
+    std::uniform_int_distribution<size_t> sizeDist(sizeof(TestData), 1024 * 1024);
 
     const int iterations = 5000;
     std::vector<void*> activeAllocations;
     activeAllocations.reserve(iterations);
 
-    for (int i = 0; i < iterations; ++i)
+    for(int i = 0; i < iterations; ++i)
     {
         size_t requestSize = sizeDist(generator);
+        
+        // Stage 1: Allocation
         void* ptr = allocator->alloc(requestSize);
 
-        if (ptr != nullptr)
+        if(ptr != nullptr)
         {
-            // Verify alignment (assuming 8-byte default)
-            if (reinterpret_cast<uintptr_t>(ptr) % 8 != 0)
+            // Verify alignment
+            if(reinterpret_cast<uintptr_t>(ptr) % 8 != 0)
             {
-                std::cerr << "Process " << processIndex << " error: Miss-aligned pointer!" << std::endl;
+                std::cerr << "Process " << processIndex 
+                          << " [ERR]: Pointer " << ptr << " is not 8-byte aligned!" << std::endl;
                 _exit(1);
             }
 
@@ -47,28 +55,46 @@ void RunAllocatorStress(mem::ShmAlloc* allocator, int processIndex)
 
             activeAllocations.push_back(ptr);
         }
-
-        // Randomly free some memory to create fragmentation
-        if (i % 3 == 0 && !activeAllocations.empty())
+        else
         {
-            size_t idx = i % activeAllocations.size();
-            void* toFree = activeAllocations[idx];
+            // If allocator returns null, we might be out of memory or fragmented
+            std::cerr << "Process " << processIndex 
+                      << " [ERR]: alloc(" << requestSize << ") returned NULL" << std::endl;
+            _exit(1);
+        }
 
-            // Verify before freeing
+        // Stage 2: Fragmentation & Yielding
+        // Every few iterations, shuffle and free a random portion
+        if(i % 5 == 0 && !activeAllocations.empty())
+        {
+            // std::shuffle creates much more complex fragmentation than linear freeing
+            std::shuffle(activeAllocations.begin(), activeAllocations.end(), generator);
+            
+            void* toFree = activeAllocations.back();
             TestData* data = static_cast<TestData*>(toFree);
-            if (data->magic != 0xABCDEFFF12345678ULL || data->processId != (uint32_t)processIndex)
+
+            // Verify integrity BEFORE freeing
+            if(data->magic != 0xABCDEFFF12345678ULL || data->processId != (uint32_t)processIndex)
             {
-                std::cerr << "Process " << processIndex << " error: Memory corruption detected!" << std::endl;
+                std::cerr << "Process " << processIndex << " [ERR]: Memory corruption! "
+                          << "Expected PID " << processIndex << ", found " << data->processId << std::endl;
                 _exit(1);
             }
 
             allocator->free(toFree);
-            activeAllocations.erase(activeAllocations.begin() + idx);
+            activeAllocations.pop_back();
+        }
+
+        // Stage 3: Force Contention
+        // Yielding forces the OS to context switch, often while a lock might be contested
+        if(i % 10 == 0)
+        {
+            std::this_thread::yield();
         }
     }
 
     // Final cleanup
-    for (void* ptr : activeAllocations)
+    for(void* ptr : activeAllocations)
     {
         allocator->free(ptr);
     }
@@ -89,7 +115,7 @@ void TestAllocatorStress()
     // Create the allocator (using the size-based overload)
     mem::ShmAlloc* myAlloc = mem::ShmAlloc::Create("StressTestAlloc", shmSize, false);
 
-    if (myAlloc == nullptr)
+    if(myAlloc == nullptr)
     {
         std::cerr << "Failed to create allocator." << std::endl;
         return;
@@ -106,7 +132,7 @@ void TestAllocatorStress()
         });
     }
 
-    if (success)
+    if(success)
     {
         std::cout << "Stress test PASSED." << std::endl;
         //myAlloc->audit(); // Print final statistics
