@@ -6,6 +6,7 @@
 
 #include <chrono>
 #include <string>
+#include <algorithm>
 
 //
 // Helper class to report elapsed time.
